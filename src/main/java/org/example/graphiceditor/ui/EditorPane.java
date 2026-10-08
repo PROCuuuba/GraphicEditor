@@ -1,103 +1,204 @@
 package org.example.graphiceditor.ui;
 
 import javafx.geometry.Pos;
-import javafx.scene.control.*;
-import javafx.scene.layout.*;
-import javafx.scene.paint.Color;
+import javafx.scene.Cursor;
+import javafx.scene.control.Button;
+import javafx.scene.control.ColorPicker;
+import javafx.scene.control.Label;
+import javafx.scene.control.ScrollPane;
+import javafx.scene.control.Separator;
+import javafx.scene.control.Slider;
+import javafx.scene.control.ToggleButton;
+import javafx.scene.control.ToggleGroup;
+import javafx.scene.control.Tooltip;
+import javafx.scene.input.MouseButton;
+import javafx.scene.layout.BorderPane;
+import javafx.scene.layout.HBox;
+import javafx.scene.layout.Region;
+import javafx.scene.layout.StackPane;
+import javafx.scene.layout.VBox;
+import org.example.graphiceditor.controller.EditorController;
+import org.example.graphiceditor.model.DrawingModel;
+import org.example.graphiceditor.model.Pixel;
+import org.example.graphiceditor.model.Tool;
+
+import java.util.List;
 
 public final class EditorPane extends BorderPane {
+    private final DrawingModel model;
+    private final EditorController controller;
+    private final DrawingCanvas canvas;
     private final ToggleGroup selection = new ToggleGroup();
-    private final Label status = new Label("Последняя фигура: —");
+    private final Label status = new Label();
+    private final Slider brushSize = new Slider(1, 100, 16);
+    private final Label sizeLabel = new Label();
+    private final ColorPicker colorPicker;
 
     public EditorPane() {
+        this(new DrawingModel(900, 650));
+    }
+
+    private EditorPane(DrawingModel model) {
+        this(model, new EditorController(model));
+    }
+
+    public EditorPane(DrawingModel model, EditorController controller) {
+        this.model = model;
+        this.controller = controller;
+        canvas = new DrawingCanvas(model);
+        colorPicker = new ColorPicker(controller.getColor());
+        brushSize.setValue(controller.getBrushSize());
         getStyleClass().add("editor");
-        Label title = new Label("Графический редактор");
-        title.getStyleClass().add("editor-title");
-        Label subtitle = new Label("Без названия");
-        subtitle.getStyleClass().add("editor-subtitle");
-        VBox header = new VBox(4, title, subtitle);
-        header.getStyleClass().add("editor-header");
-        setTop(header);
+        setTop(header());
         setLeft(controls());
-
-        Region sheet = new Region();
-        sheet.setPrefSize(900, 650);
-        sheet.setMaxSize(900, 650);
-        sheet.getStyleClass().add("workspace-sheet");
-        StackPane workspace = new StackPane(sheet);
-        workspace.setAlignment(Pos.CENTER);
-        workspace.getStyleClass().add("workspace");
-        setCenter(workspace);
-
+        setCenter(workspace());
+        status.setId("drawing-status");
         HBox footer = new HBox(status);
         footer.getStyleClass().add("status-bar");
         setBottom(footer);
+        connectDrawing();
+        updateStatus();
+        sceneProperty().addListener((observable, oldScene, newScene) -> {
+            if (newScene != null) {
+                newScene.windowProperty().addListener((property, oldWindow, newWindow) -> {
+                    if (newWindow != null) {
+                        newWindow.focusedProperty().addListener((focus, wasFocused, isFocused) -> {
+                            if (!isFocused) {
+                                controller.endStroke();
+                            }
+                        });
+                    }
+                });
+            }
+        });
     }
 
-    private ScrollPane controls() {
-        GridPane parameters = grid();
-        addField(parameters, 0, "X", new TextField("60"));
-        addField(parameters, 1, "Y", new TextField("60"));
-        addField(parameters, 2, "Ширина / диаметр", new TextField("160"));
-        addField(parameters, 3, "Высота", new TextField("100"));
-        addField(parameters, 4, "Радиус скругления", new TextField("20"));
-        addField(parameters, 5, "Количество", new TextField("1"));
-        GridPane colors = grid();
-        addField(colors, 0, "Заливка", new ColorPicker(Color.web("#93c5fd")));
-        addField(colors, 1, "Контур", new ColorPicker(Color.web("#1e3a8a")));
-        VBox figures = new VBox(8, figureButton("Круг"), figureButton("Эллипс"),
-                figureButton("Прямоугольник"), figureButton("Скруглённый прямоугольник"),
-                figureButton("Квадрат"));
+    private VBox header() {
+        Label title = new Label("Графический редактор");
+        title.getStyleClass().add("editor-title");
+        Label subtitle = new Label("Растровое рисование • точка, круг и квадрат");
+        subtitle.getStyleClass().add("editor-subtitle");
+        VBox header = new VBox(4, title, subtitle);
+        header.getStyleClass().add("editor-header");
+        return header;
+    }
+
+    private VBox controls() {
+        VBox tools = new VBox(8);
+        for (Tool tool : Tool.values()) {
+            tools.getChildren().add(toolButton(tool));
+        }
+        selection.selectedToggleProperty().addListener((observable, previous, selected) -> {
+            if (selected == null) {
+                if (previous != null) {
+                    previous.setSelected(true);
+                }
+                return;
+            }
+            controller.setTool((Tool) selected.getUserData());
+            updateStatus();
+        });
+
+        colorPicker.setId("color-picker");
+        colorPicker.setMaxWidth(Double.MAX_VALUE);
+        colorPicker.valueProperty().addListener((observable, previous, selected) -> {
+            controller.setColor(selected);
+            updateStatus();
+        });
+
+        brushSize.setId("brush-size");
+        brushSize.setShowTickLabels(true);
+        brushSize.setShowTickMarks(true);
+        brushSize.setMajorTickUnit(25);
+        brushSize.setBlockIncrement(1);
+        brushSize.valueProperty().addListener((observable, oldValue, newValue) -> {
+            controller.setBrushSize(newValue.doubleValue());
+            updateStatus();
+        });
+        Label hint = new Label("Нажмите на холст для отпечатка. Удерживайте левую кнопку мыши и ведите курсор для рисования.");
+        hint.setWrapText(true);
+        hint.getStyleClass().add("help-text");
         Button clear = new Button("Очистить холст");
+        clear.setId("clear-canvas");
         clear.setMaxWidth(Double.MAX_VALUE);
         clear.setOnAction(event -> {
-            selection.selectToggle(null);
-            status.setText("Последняя фигура: —");
+            controller.clear();
+            canvas.renderAll();
+            updateStatus();
         });
-        VBox content = new VBox(12, section("Параметры"), parameters,
-                new Separator(), section("Цвета"), colors,
-                new Separator(), section("Фигуры"), figures, new Separator(), clear);
-        content.setPrefWidth(330);
+        VBox content = new VBox(12, section("Инструменты"), tools,
+                new Separator(), section("Цвет"), colorPicker,
+                new Separator(), section("Размер кисти"), brushSize, sizeLabel,
+                new Separator(), hint, clear);
+        content.setPrefWidth(260);
+        content.setMinWidth(260);
         content.getStyleClass().add("controls-content");
-        ScrollPane panel = new ScrollPane(content);
-        panel.setFitToWidth(true);
-        panel.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
-        panel.setPrefWidth(335);
-        return panel;
+        return content;
     }
 
-    private ToggleButton figureButton(String name) {
-        ToggleButton button = new ToggleButton(name);
+    private ScrollPane workspace() {
+        StackPane frame = new StackPane(canvas);
+        frame.getStyleClass().add("workspace-sheet");
+        frame.setMaxSize(Region.USE_PREF_SIZE, Region.USE_PREF_SIZE);
+        StackPane surround = new StackPane(frame);
+        surround.setAlignment(Pos.TOP_LEFT);
+        surround.getStyleClass().add("workspace");
+        ScrollPane scroll = new ScrollPane(surround);
+        scroll.setPannable(false);
+        return scroll;
+    }
+
+    private ToggleButton toolButton(Tool tool) {
+        ToggleButton button = new ToggleButton(tool.getDisplayName());
+        button.setId("tool-" + tool.name().toLowerCase(java.util.Locale.ROOT));
+        button.setUserData(tool);
         button.setToggleGroup(selection);
+        button.setSelected(tool == controller.getTool());
         button.setMaxWidth(Double.MAX_VALUE);
         button.setMinHeight(36);
-        button.setOnAction(event -> status.setText(
-                button.isSelected() ? "Выбрана фигура: " + name : "Последняя фигура: —"));
+        button.setTooltip(new Tooltip(tool == Tool.POINT
+                ? "Рисование точками размером 1 пиксель"
+                : "Рисование " + (tool == Tool.CIRCLE ? "круглой" : "квадратной") + " кистью"));
         return button;
     }
 
-    private static GridPane grid() {
-        GridPane grid = new GridPane();
-        grid.setHgap(10);
-        grid.setVgap(10);
-        return grid;
+    private void connectDrawing() {
+        canvas.setCursor(Cursor.CROSSHAIR);
+        canvas.setOnMousePressed(event -> {
+            if (event.getButton() == MouseButton.PRIMARY) {
+                draw(controller.beginStroke(event.getX(), event.getY()));
+                event.consume();
+            }
+        });
+        canvas.setOnMouseDragged(event -> {
+            if (event.isPrimaryButtonDown()) {
+                draw(controller.continueStroke(event.getX(), event.getY()));
+                event.consume();
+            }
+        });
+        canvas.setOnMouseExited(event -> controller.continueStroke(-1, -1));
+        canvas.setOnMouseReleased(event -> controller.endStroke());
+    }
+
+    private void draw(List<Pixel> pixels) {
+        canvas.drawPixels(pixels);
+        updateStatus();
+    }
+
+    private void updateStatus() {
+        brushSize.setDisable(controller.getTool() == Tool.POINT);
+        sizeLabel.setText(controller.getTool() == Tool.POINT ? "Точка: 1 пиксель"
+                : "Размер: %.0f пикс.".formatted(controller.getBrushSize()));
+        status.setText("Инструмент: %s • Элементов: %d • Холст: %.0f × %.0f"
+                .formatted(controller.getTool().getDisplayName(), model.size(),
+                        model.getWidth(), model.getHeight()));
     }
 
     private static Label section(String name) {
         Label label = new Label(name);
         label.getStyleClass().add("section-title");
-        label.setMinWidth(Region.USE_PREF_SIZE);
-        label.setMinHeight(Region.USE_PREF_SIZE);
+        label.setMinSize(Region.USE_PREF_SIZE, Region.USE_PREF_SIZE);
         label.setMaxWidth(Double.MAX_VALUE);
         return label;
-    }
-
-    private static void addField(GridPane grid, int row, String title, javafx.scene.Node control) {
-        grid.add(new Label(title), 0, row);
-        grid.add(control, 1, row);
-        if (control instanceof TextField field) {
-            field.setPrefColumnCount(7);
-        }
-        GridPane.setHgrow(control, Priority.ALWAYS);
     }
 }

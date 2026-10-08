@@ -46,3 +46,13 @@
     -fx-padding: 2 8 2 0;
     -fx-text-fill: #475569;
 }
+
+.toggle-button:selected {
+    -fx-background-color: #2563eb;
+    -fx-text-fill: white;
+}
+
+.help-text {
+    -fx-text-fill: #475569;
+    -fx-line-spacing: 3px;
+}

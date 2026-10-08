@@ -14,7 +14,7 @@ public class GraphicsEditorApplication extends Application {
         scene.getStylesheets().add(Objects.requireNonNull(
                 GraphicsEditorApplication.class.getResource("/org/example/graphiceditor/css/application.css"),
                 "Не найден ресурс application.css").toExternalForm());
-        stage.setTitle("Графический редактор — макет интерфейса");
+        stage.setTitle("Графический редактор — растровый редактор");
         stage.setMinWidth(960);
         stage.setMinHeight(680);
         stage.setScene(scene);

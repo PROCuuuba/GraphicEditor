@@ -1,0 +1,48 @@
+.editor {
+    -fx-background-color: #eef2f7;
+}
+
+.editor-header {
+    -fx-background-color: #0f172a;
+    -fx-padding: 16 24;
+}
+
+.editor-title {
+    -fx-font-family: "Arial";
+    -fx-font-size: 24px;
+    -fx-font-weight: bold;
+    -fx-text-fill: white;
+}
+
+.editor-subtitle {
+    -fx-text-fill: #cbd5e1;
+}
+
+.workspace {
+    -fx-padding: 24;
+}
+
+.workspace-sheet {
+    -fx-background-color: white;
+    -fx-border-color: #dbe2ea;
+    -fx-effect: dropshadow(gaussian, rgba(15, 23, 42, 0.12), 18, 0.1, 0, 5);
+}
+
+.status-bar {
+    -fx-padding: 12 20;
+    -fx-background-color: white;
+    -fx-border-color: #cbd5e1 transparent transparent transparent;
+}
+
+.controls-content {
+    -fx-padding: 20;
+    -fx-background-color: white;
+}
+
+.section-title {
+    -fx-font-family: "Arial";
+    -fx-font-size: 14px;
+    -fx-font-weight: bold;
+    -fx-padding: 2 8 2 0;
+    -fx-text-fill: #475569;
+}

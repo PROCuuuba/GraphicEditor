@@ -115,9 +115,6 @@ public final class EditorPane extends BorderPane {
             controller.setBrushSize(newValue.doubleValue());
             updateStatus();
         });
-        Label hint = new Label("Нажмите на холст для отпечатка. Удерживайте левую кнопку мыши и ведите курсор для рисования.");
-        hint.setWrapText(true);
-        hint.getStyleClass().add("help-text");
         Button clear = new Button("Очистить холст");
         clear.setId("clear-canvas");
         clear.setMaxWidth(Double.MAX_VALUE);
@@ -129,7 +126,7 @@ public final class EditorPane extends BorderPane {
         VBox content = new VBox(12, section("Инструменты"), tools,
                 new Separator(), section("Цвет"), colorPicker,
                 new Separator(), section("Размер кисти"), brushSize, sizeLabel,
-                new Separator(), hint, clear);
+                new Separator(), clear);
         content.setPrefWidth(260);
         content.setMinWidth(260);
         content.getStyleClass().add("controls-content");

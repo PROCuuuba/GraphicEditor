@@ -235,6 +235,25 @@ class EditorAcceptanceTest {
     }
 
     @Test
+    void circularBrushIsClippedAtCornersAndSupportsItsMinimumSize() throws Exception {
+        withEditor(editor -> {
+            editor.button("tool-circle").fire();
+            chooseColor(editor, Color.GREEN);
+            editor.brush().setValue(20);
+            click(editor.canvas(), 0, 0);
+            click(editor.canvas(), 899, 649);
+            PixelReader image = snapshot(editor.canvas());
+            assertColor(image, 0, 0, Color.GREEN);
+            assertColor(image, 9, 9, Color.WHITE);
+            assertColor(image, 899, 649, Color.GREEN);
+            editor.brush().setValue(1);
+            click(editor.canvas(), 100.5, 100.5);
+            assertEquals(1, editor.model().getPixels().getLast().getSize());
+            assertTrue(snapshot(editor.canvas()).getColor(100, 100).getGreen() < 1);
+        });
+    }
+
+    @Test
     void brushesAreClippedAtTheCanvasEdges() throws Exception {
         withEditor(editor -> {
             editor.button("tool-square").fire();

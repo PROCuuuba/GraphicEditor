@@ -24,3 +24,40 @@
 feature/square, feature/tools и feature/factory используются для настоящих
 доработок, проверок и изучения PR, review и слияния. Они не выдаются за
 историю первоначального написания уже готовых классов.
+
+## История Git-практики
+
+Схема соответствует реальным коммитам и слияниям:
+
+```mermaid
+gitGraph
+    commit id: "f9b735e"
+    branch feature/point
+    commit id: "930a3cc"
+    checkout main
+    merge feature/point id: "5eaa3d7"
+    branch feature/circle
+    commit id: "c0593e9"
+    checkout main
+    merge feature/circle id: "aa713e9"
+    branch feature/tools
+    commit id: "6af0de3"
+    checkout main
+    branch feature/square
+    commit id: "3fc546a"
+    checkout main
+    merge feature/square id: "cacb7d6"
+    checkout feature/tools
+    merge main id: "8f8ac10"
+    checkout main
+    merge feature/tools id: "7d4a1d1"
+    branch feature/factory
+    commit id: "99f8697"
+    checkout main
+    merge feature/factory id: "420876c"
+```
+
+Каждая ветка прошла Pull Request и самопроверку кода. Конфликт README
+между feature/square и feature/tools возник при настоящем слиянии и
+разрешён коммитом 8f8ac10. Review одним автором оформлен комментарием:
+GitHub не позволяет одобрить собственный Pull Request.

@@ -1,7 +1,8 @@
 # GraphicEditor
 
-Учебный графический редактор на JavaFX. Текущий этап — первый инкремент:
-растровое рисование точками, круглой и квадратной кистью.
+Учебный графический редактор на JavaFX. В основной опубликованной ветке
+завершён первый инкремент. Локальная ветка codex/increment-2 добавляет
+векторные полигоны к растровому рисованию.
 
 Возможности: реализованы точка, круг и квадрат; добавлены инструменты
 создания графических элементов, выбор цвета и размера кисти, очистка холста.
@@ -61,3 +62,41 @@ gitGraph
 между feature/square и feature/tools возник при настоящем слиянии и
 разрешён коммитом 8f8ac10. Review одним автором оформлен комментарием:
 GitHub не позволяет одобрить собственный Pull Request.
+
+## Второй инкремент
+
+В режиме «Полигон» задайте не менее трёх вершин кликами и нажмите
+«Завершить полигон» или Enter. «Отменить вершины» или Escape сбрасывает
+черновик. Выберите созданную фигуру в списке, настройте независимые
+заливку, контур и тень, затем нажмите «Применить оформление».
+«Удалить полигон» удаляет выбранную фигуру. «Очистить холст» удаляет
+растровые и векторные элементы. Кисти первого инкремента продолжают работать.
+
+Polygon хранит геометрию. ShapeDecorator оборачивает Shape, а FillDecorator,
+BorderDecorator и ShadowDecorator передают вызов дальше с дополненным
+контекстом ShapeRenderer. После обхода цепочки тень, заливка и контур
+отрисовываются в стабильном порядке независимо от порядка обёрток.
+
+```mermaid
+sequenceDiagram
+    participant Canvas as DrawingCanvas
+    participant Shadow as ShadowDecorator
+    participant Border as BorderDecorator
+    participant Fill as FillDecorator
+    participant Polygon
+    participant Renderer as ShapeRenderer
+    Canvas->>Shadow: render(renderer)
+    Shadow->>Renderer: withShadow(...)
+    Shadow->>Border: render(context)
+    Border->>Renderer: withBorder(...)
+    Border->>Fill: render(context)
+    Fill->>Renderer: withFill(...)
+    Fill->>Polygon: render(context)
+    Polygon->>Renderer: polygon(vertices)
+    Renderer->>Canvas: тень, заливка, контур
+```
+
+При совместной работе растровый слой находится под полигонами.
+Для инструментов предусмотрены всплывающие подсказки.
+Сохранение, загрузка и Undo/Redo относятся к третьему инкременту
+и здесь не реализованы.

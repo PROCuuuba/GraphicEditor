@@ -6,7 +6,7 @@
 
     <groupId>org.example</groupId>
     <artifactId>GraphicEditor</artifactId>
-    <version>0.1.0</version>
+    <version>0.2.0</version>
     <name>GraphicEditor</name>
 
     <properties>
@@ -40,6 +40,7 @@
                 <version>3.5.2</version>
                 <configuration>
                     <useModulePath>false</useModulePath>
+                    <reuseForks>false</reuseForks>
                     <excludedGroups>${excludedGroups}</excludedGroups>
                 </configuration>
             </plugin>

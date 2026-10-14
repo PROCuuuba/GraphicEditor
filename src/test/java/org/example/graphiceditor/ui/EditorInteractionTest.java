@@ -22,6 +22,7 @@ import javafx.scene.input.MouseButton;
 import javafx.scene.input.MouseEvent;
 import javafx.scene.input.PickResult;
 import javafx.scene.input.ScrollEvent;
+import javafx.scene.input.ZoomEvent;
 import javafx.scene.paint.Color;
 import javafx.stage.Stage;
 import org.example.graphiceditor.controller.EditorController;
@@ -70,6 +71,7 @@ class EditorInteractionTest {
     void zoomChangesOnlyDisplayAndUpdatesScrollableBounds() throws Exception {
         withEditor(editor -> {
             CanvasViewport viewport = editor.viewport();
+            viewport.setZoom(1);
             assertEquals(1, viewport.getZoom());
             editor.button("zoom-in").fire();
             assertTrue(viewport.getZoom() > 1);
@@ -121,8 +123,61 @@ class EditorInteractionTest {
     }
 
     @Test
+    void automaticFitGrowsWithTheWindowAndKeepsTheCanvasCenteredAndVisible() throws Exception {
+        withEditor(1000, 720, editor -> {
+            click(editor.canvas(), 180, 140);
+            editor.toggle("mode-polygon").fire();
+            triangle(editor);
+            editor.button("polygon-finish").fire();
+            Shape original = editor.model().getShapes().getFirst();
+            double smallerZoom = editor.viewport().getZoom();
+            assertCanvasCenteredAndVisible(editor);
+
+            editor.resize(1900, 1200);
+
+            assertTrue(editor.viewport().getZoom() > smallerZoom);
+            assertCanvasCenteredAndVisible(editor);
+            assertEquals(900, editor.canvas().getWidth());
+            assertEquals(650, editor.canvas().getHeight());
+            assertEquals(900, editor.model().getWidth());
+            assertEquals(650, editor.model().getHeight());
+            assertEquals(180, editor.model().getPixels().getFirst().getX(), 1e-9);
+            assertEquals(140, editor.model().getPixels().getFirst().getY(), 1e-9);
+            assertSame(original, editor.model().getShapes().getFirst());
+
+            editor.resize(1000, 720);
+            assertEquals(smallerZoom, editor.viewport().getZoom(), 0.02);
+            assertCanvasCenteredAndVisible(editor);
+        });
+    }
+
+    @Test
+    void manualZoomSurvivesWindowResizeAndFitReactivatesAutomaticSizing() throws Exception {
+        withEditor(1000, 720, editor -> {
+            editor.viewport().setZoom(1.7);
+            editor.resize(1900, 1200);
+            assertEquals(1.7, editor.viewport().getZoom());
+            editor.resize(1100, 760);
+            assertEquals(1.7, editor.viewport().getZoom());
+
+            editor.button("zoom-fit").fire();
+            double smallerZoom = editor.viewport().getZoom();
+            assertCanvasCenteredAndVisible(editor);
+            editor.resize(1900, 1200);
+            assertTrue(editor.viewport().getZoom() > smallerZoom);
+            assertCanvasCenteredAndVisible(editor);
+
+            shortcut(editor.pane(), KeyCode.DIGIT0, false, true);
+            assertEquals(1, editor.viewport().getZoom());
+            editor.resize(1000, 720);
+            assertEquals(1, editor.viewport().getZoom());
+        });
+    }
+
+    @Test
     void zoomPreservesTheLogicalPointAtViewportCenterAndUnderTheWheelCursor() throws Exception {
         withEditor(850, 620, editor -> {
+            editor.viewport().setZoom(1);
             ScrollPane scroll = editor.node("canvas-scroll", ScrollPane.class);
             Node visibleArea = scroll.lookup(".viewport");
             assertNotNull(visibleArea);
@@ -158,10 +213,100 @@ class EditorInteractionTest {
                     new PickResult(editor.canvas(),
                             new Point3D(logicalCursor.getX(), logicalCursor.getY(), 0), 0)));
 
-            assertEquals(1.25, editor.viewport().getZoom());
+            assertTrue(editor.viewport().getZoom() > 1);
             Point2D afterWheelZoom = editor.canvas().sceneToLocal(visibleArea.localToScene(cursor));
             assertEquals(logicalCursor.getX(), afterWheelZoom.getX(), 1);
             assertEquals(logicalCursor.getY(), afterWheelZoom.getY(), 1);
+        });
+    }
+
+    @Test
+    void unmodifiedMouseWheelZoomsSmoothlyAroundTheCursorAndHonorsLimits() throws Exception {
+        withEditor(850, 620, editor -> {
+            editor.viewport().setZoom(1.6);
+            ScrollPane scroll = editor.node("canvas-scroll", ScrollPane.class);
+            scroll.setHvalue(0.35);
+            scroll.setVvalue(0.4);
+            editor.pane().layout();
+            Point2D anchor = viewportAnchor(editor, 0.37, 0.61);
+            Point2D logical = logicalAt(editor, anchor);
+
+            wheel(editor, anchor, 40, false, false, false);
+
+            double coarseZoom = editor.viewport().getZoom();
+            assertTrue(coarseZoom > 1.6);
+            assertPointEquals(logical, logicalAt(editor, anchor));
+            wheel(editor, anchor, -40, false, false, false);
+            assertTrue(editor.viewport().getZoom() < coarseZoom);
+            assertEquals(1.6, editor.viewport().getZoom(), 0.0001);
+            assertPointEquals(logical, logicalAt(editor, anchor));
+
+            wheel(editor, anchor, 1, false, false, false);
+            assertTrue(editor.viewport().getZoom() > 1.6);
+            assertTrue(editor.viewport().getZoom() < coarseZoom);
+            assertPointEquals(logical, logicalAt(editor, anchor));
+
+            editor.viewport().setZoom(4);
+            wheel(editor, anchor, 40, false, false, false);
+            assertEquals(4, editor.viewport().getZoom());
+            editor.viewport().setZoom(0.25);
+            wheel(editor, anchor, -40, false, false, false);
+            assertEquals(0.25, editor.viewport().getZoom());
+        });
+    }
+
+    @Test
+    void controlAndCommandWheelZoomAlsoWorkWhileDirectTouchScrollStaysScroll() throws Exception {
+        withEditor(850, 620, editor -> {
+            for (boolean command : List.of(false, true)) {
+                editor.viewport().setZoom(1.6);
+                Point2D anchor = viewportAnchor(editor, 0.42, 0.46);
+                Point2D logical = logicalAt(editor, anchor);
+                wheel(editor, anchor, 12, !command, command, false);
+                double increased = editor.viewport().getZoom();
+                assertTrue(increased > 1.6);
+                assertPointEquals(logical, logicalAt(editor, anchor));
+                wheel(editor, anchor, -12, !command, command, false);
+                assertTrue(editor.viewport().getZoom() < increased);
+                assertEquals(1.6, editor.viewport().getZoom(), 0.0001);
+                assertPointEquals(logical, logicalAt(editor, anchor));
+            }
+
+            Point2D anchor = viewportAnchor(editor, 0.5, 0.5);
+            wheel(editor, anchor, 40, false, false, true);
+            assertEquals(1.6, editor.viewport().getZoom());
+            wheel(editor, anchor, 40, true, false, true);
+            assertTrue(editor.viewport().getZoom() > 1.6);
+        });
+    }
+
+    @Test
+    void pinchZoomUsesTheGestureFactorAndPreservesThePointUnderTheFingers() throws Exception {
+        withEditor(850, 620, editor -> {
+            editor.viewport().setZoom(1.6);
+            ScrollPane scroll = editor.node("canvas-scroll", ScrollPane.class);
+            scroll.setHvalue(0.3);
+            scroll.setVvalue(0.4);
+            editor.pane().layout();
+            Point2D anchor = viewportAnchor(editor, 0.38, 0.57);
+            Point2D logical = logicalAt(editor, anchor);
+
+            pinch(editor, anchor, 1.4);
+            assertEquals(2.24, editor.viewport().getZoom(), 0.0001);
+            assertPointEquals(logical, logicalAt(editor, anchor));
+            pinch(editor, anchor, 1 / 1.4);
+            assertEquals(1.6, editor.viewport().getZoom(), 0.0001);
+            assertPointEquals(logical, logicalAt(editor, anchor));
+
+            for (double invalidFactor : List.of(Double.NaN, Double.POSITIVE_INFINITY, 0.0, -1.0)) {
+                pinch(editor, anchor, invalidFactor);
+                assertEquals(1.6, editor.viewport().getZoom(), 0.0001);
+            }
+
+            pinch(editor, anchor, 100);
+            assertEquals(4, editor.viewport().getZoom());
+            pinch(editor, anchor, 0.001);
+            assertEquals(0.25, editor.viewport().getZoom());
         });
     }
 
@@ -174,13 +319,13 @@ class EditorInteractionTest {
                 editor.viewport().setZoom(zoom);
                 editor.pane().layout();
                 click(editor.canvas(), 180.5, 140.5);
-                assertEquals(180.5, editor.model().getPixels().getFirst().getX());
-                assertEquals(140.5, editor.model().getPixels().getFirst().getY());
+                assertEquals(180.5, editor.model().getPixels().getFirst().getX(), 1e-9);
+                assertEquals(140.5, editor.model().getPixels().getFirst().getY(), 1e-9);
 
                 editor.toggle("mode-polygon").fire();
                 triangle(editor);
                 editor.button("polygon-finish").fire();
-                assertEquals(List.of(new Vertex(100, 100), new Vertex(220, 100),
+                assertVerticesEquals(List.of(new Vertex(100, 100), new Vertex(220, 100),
                         new Vertex(220, 220)), editor.model().getShapes().getFirst().getVertices());
             }
         });
@@ -198,7 +343,7 @@ class EditorInteractionTest {
                 click(editor.canvas(), 100 + 9 / zoom, 100);
 
                 assertEquals(1, editor.model().getShapes().size());
-                assertEquals(List.of(new Vertex(100, 100), new Vertex(220, 100),
+                assertVerticesEquals(List.of(new Vertex(100, 100), new Vertex(220, 100),
                         new Vertex(220, 220)), editor.model().getShapes().getFirst().getVertices());
                 assertTrue(editor.button("polygon-finish").isDisabled());
             }
@@ -220,7 +365,7 @@ class EditorInteractionTest {
             click(editor.canvas(), 106, 100);
             assertTrue(editor.model().getShapes().isEmpty());
             editor.button("polygon-finish").fire();
-            assertEquals(List.of(new Vertex(100, 100), new Vertex(220, 100),
+            assertVerticesEquals(List.of(new Vertex(100, 100), new Vertex(220, 100),
                     new Vertex(220, 220), new Vertex(106, 100)),
                     editor.model().getShapes().getFirst().getVertices());
         });
@@ -232,6 +377,7 @@ class EditorInteractionTest {
             editor.toggle("mode-polygon").fire();
             triangle(editor);
             editor.button("polygon-finish").fire();
+            Vertex originalVertex = editor.model().getShapes().getFirst().getVertices().getFirst();
             editor.viewport().setZoom(2);
             click(editor.canvas(), 103, 101);
             click(editor.canvas(), 350, 100);
@@ -239,7 +385,7 @@ class EditorInteractionTest {
             editor.button("polygon-finish").fire();
 
             assertEquals(2, editor.model().getShapes().size());
-            assertEquals(new Vertex(100, 100),
+            assertEquals(originalVertex,
                     editor.model().getShapes().getLast().getVertices().getFirst());
             assertEquals(3, editor.model().getShapes().getLast().getVertices().size());
         });
@@ -276,13 +422,14 @@ class EditorInteractionTest {
             editor.toggle("mode-polygon").fire();
             triangle(editor);
             editor.button("polygon-finish").fire();
+            Shape original = editor.model().getShapes().getFirst();
             click(editor.canvas(), 350, 100);
             click(editor.canvas(), 450, 100);
             click(editor.canvas(), 450, 220);
             editor.button("polygon-finish").fire();
             key(editor.pane(), KeyCode.DELETE);
             assertEquals(1, editor.model().getShapes().size());
-            assertEquals(new Vertex(100, 100), editor.model().getShapes().getFirst().getVertices().getFirst());
+            assertSame(original, editor.model().getShapes().getFirst());
 
             key(editor.pane(), KeyCode.B);
             click(editor.canvas(), 500, 300);
@@ -298,6 +445,7 @@ class EditorInteractionTest {
     @Test
     void controlAndCommandZoomShortcutsWorkAndTypingFieldsKeepTheirOwnKeys() throws Exception {
         withEditor(editor -> {
+            editor.viewport().setZoom(1);
             shortcut(editor.pane(), KeyCode.EQUALS, false, false);
             assertTrue(editor.viewport().getZoom() > 1);
             shortcut(editor.pane(), KeyCode.DIGIT0, false, false);
@@ -357,7 +505,8 @@ class EditorInteractionTest {
             editor.node("shadow-enabled", CheckBox.class).fire();
             editor.node("shadow-color", ColorPicker.class).setValue(Color.GRAY);
             editor.button("polygon-apply").fire();
-            VectorStyle originalStyle = VectorStyle.from(editor.model().getShapes().getFirst());
+            Shape original = editor.model().getShapes().getFirst();
+            VectorStyle originalStyle = VectorStyle.from(original);
             editor.viewport().setZoom(2);
 
             mouse(editor.canvas(), MouseEvent.MOUSE_PRESSED, 103, 101, true);
@@ -366,8 +515,9 @@ class EditorInteractionTest {
 
             assertEquals(1, editor.model().getShapes().size());
             Shape moved = editor.model().getShapes().getFirst();
-            assertEquals(List.of(new Vertex(150, 140), new Vertex(220, 100),
+            assertVerticesEquals(List.of(new Vertex(150, 140), new Vertex(220, 100),
                     new Vertex(220, 220)), moved.getVertices());
+            assertEquals(original.getVertices().subList(1, 3), moved.getVertices().subList(1, 3));
             assertEquals(originalStyle, VectorStyle.from(moved));
             assertTrue(editor.button("polygon-finish").isDisabled());
             assertTrue(editor.model().getPixels().isEmpty());
@@ -380,6 +530,7 @@ class EditorInteractionTest {
             editor.toggle("mode-polygon").fire();
             triangle(editor);
             editor.button("polygon-finish").fire();
+            Shape original = editor.model().getShapes().getFirst();
             click(editor.canvas(), 350, 100);
             click(editor.canvas(), 450, 100);
             click(editor.canvas(), 450, 220);
@@ -394,8 +545,10 @@ class EditorInteractionTest {
             mouse(editor.canvas(), MouseEvent.MOUSE_RELEASED, 140, 150, false);
 
             assertEquals(2, editor.model().getShapes().size());
-            assertEquals(List.of(new Vertex(140, 150), new Vertex(220, 100),
+            assertVerticesEquals(List.of(new Vertex(140, 150), new Vertex(220, 100),
                     new Vertex(220, 220)), editor.model().getShapes().getFirst().getVertices());
+            assertEquals(original.getVertices().subList(1, 3),
+                    editor.model().getShapes().getFirst().getVertices().subList(1, 3));
             assertSame(untouched, editor.model().getShapes().getLast());
             assertEquals(0, list.getSelectionModel().getSelectedIndex());
             assertTrue(editor.button("polygon-finish").isDisabled());
@@ -408,14 +561,17 @@ class EditorInteractionTest {
             editor.toggle("mode-polygon").fire();
             triangle(editor);
             editor.button("polygon-finish").fire();
+            Shape original = editor.model().getShapes().getFirst();
 
             mouse(editor.canvas(), MouseEvent.MOUSE_PRESSED, 100, 100, true);
             mouse(editor.canvas(), MouseEvent.MOUSE_DRAGGED, 130, 150, true);
             mouse(editor.canvas(), MouseEvent.MOUSE_DRAGGED, 1010, 150, true);
             mouse(editor.canvas(), MouseEvent.MOUSE_RELEASED, 1010, 150, false);
 
-            assertEquals(List.of(new Vertex(130, 150), new Vertex(220, 100),
+            assertVerticesEquals(List.of(new Vertex(130, 150), new Vertex(220, 100),
                     new Vertex(220, 220)), editor.model().getShapes().getFirst().getVertices());
+            assertEquals(original.getVertices().subList(1, 3),
+                    editor.model().getShapes().getFirst().getVertices().subList(1, 3));
             assertEquals(1, editor.model().getShapes().size());
             assertTrue(editor.button("polygon-finish").isDisabled());
         });
@@ -431,7 +587,7 @@ class EditorInteractionTest {
 
             mouse(editor.canvas(), MouseEvent.MOUSE_PRESSED, 100, 100, true);
             mouse(editor.canvas(), MouseEvent.MOUSE_DRAGGED, 150, 160, true);
-            assertEquals(new Vertex(150, 160),
+            assertVertexEquals(new Vertex(150, 160),
                     editor.model().getShapes().getFirst().getVertices().getFirst());
             key(editor.pane(), KeyCode.ESCAPE);
             mouse(editor.canvas(), MouseEvent.MOUSE_RELEASED, 150, 160, false);
@@ -461,8 +617,10 @@ class EditorInteractionTest {
 
             assertEquals(2, editor.model().getShapes().size());
             assertSame(original, editor.model().getShapes().getFirst());
-            assertEquals(List.of(new Vertex(100, 100), new Vertex(350, 100),
+            assertVerticesEquals(List.of(new Vertex(100, 100), new Vertex(350, 100),
                     new Vertex(350, 220)), editor.model().getShapes().getLast().getVertices());
+            assertEquals(original.getVertices().getFirst(),
+                    editor.model().getShapes().getLast().getVertices().getFirst());
         });
     }
 
@@ -487,10 +645,126 @@ class EditorInteractionTest {
         });
     }
 
+    @Test
+    void zoomDuringMouseGesturesKeepsTheLastPositionAndEndsDrawingUntilTheNextPress() throws Exception {
+        withEditor(editor -> {
+            editor.toggle("mode-polygon").fire();
+            for (boolean useWheel : List.of(true, false)) {
+                editor.button("clear-canvas").fire();
+                triangle(editor);
+                editor.button("polygon-finish").fire();
+                editor.viewport().setZoom(1.6);
+                mouse(editor.canvas(), MouseEvent.MOUSE_PRESSED, 100, 100, true);
+                mouse(editor.canvas(), MouseEvent.MOUSE_DRAGGED, 140, 150, true);
+                List<Vertex> beforeZoom = editor.model().getShapes().getFirst().getVertices();
+                assertVertexEquals(new Vertex(140, 150), beforeZoom.getFirst());
+
+                if (useWheel) {
+                    wheel(editor, viewportAnchor(editor, 0.5, 0.5), 40, false, false, false);
+                } else {
+                    shortcut(editor.pane(), KeyCode.EQUALS, false, true);
+                }
+                assertTrue(editor.viewport().getZoom() > 1.6);
+                mouse(editor.canvas(), MouseEvent.MOUSE_DRAGGED, 230, 250, true);
+                mouse(editor.canvas(), MouseEvent.MOUSE_RELEASED, 230, 250, false);
+
+                assertEquals(1, editor.model().getShapes().size());
+                assertEquals(beforeZoom, editor.model().getShapes().getFirst().getVertices());
+                assertTrue(editor.button("polygon-finish").isDisabled());
+                assertTrue(editor.button("polygon-cancel").isDisabled());
+                assertTrue(editor.model().getPixels().isEmpty());
+            }
+
+            editor.button("clear-canvas").fire();
+            editor.toggle("mode-raster").fire();
+            editor.viewport().setZoom(1.6);
+            mouse(editor.canvas(), MouseEvent.MOUSE_PRESSED, 180, 140, true);
+            mouse(editor.canvas(), MouseEvent.MOUSE_DRAGGED, 190, 140, true);
+            int pixelsBeforeZoom = editor.model().getPixels().size();
+            assertTrue(pixelsBeforeZoom > 1);
+            wheel(editor, viewportAnchor(editor, 0.5, 0.5), 40, false, false, false);
+            mouse(editor.canvas(), MouseEvent.MOUSE_DRAGGED, 250, 150, true);
+            mouse(editor.canvas(), MouseEvent.MOUSE_RELEASED, 250, 150, false);
+
+            assertEquals(pixelsBeforeZoom, editor.model().getPixels().size());
+            assertTrue(editor.model().getShapes().isEmpty());
+        });
+    }
+
     private static void triangle(Editor editor) {
         click(editor.canvas(), 100, 100);
         click(editor.canvas(), 220, 100);
         click(editor.canvas(), 220, 220);
+    }
+
+    private static void assertVerticesEquals(List<Vertex> expected, List<Vertex> actual) {
+        assertEquals(expected.size(), actual.size());
+        for (int index = 0; index < expected.size(); index++) {
+            assertVertexEquals(expected.get(index), actual.get(index));
+        }
+    }
+
+    private static void assertVertexEquals(Vertex expected, Vertex actual) {
+        assertEquals(expected.x(), actual.x(), 1e-9);
+        assertEquals(expected.y(), actual.y(), 1e-9);
+    }
+
+    private static void assertCanvasCenteredAndVisible(Editor editor) {
+        ScrollPane scroll = editor.node("canvas-scroll", ScrollPane.class);
+        Node visibleArea = scroll.lookup(".viewport");
+        assertNotNull(visibleArea);
+        Point2D topLeft = visibleArea.sceneToLocal(editor.canvas().localToScene(0, 0));
+        Point2D bottomRight = visibleArea.sceneToLocal(editor.canvas().localToScene(900, 650));
+        double width = scroll.getViewportBounds().getWidth();
+        double height = scroll.getViewportBounds().getHeight();
+        assertTrue(topLeft.getX() >= -1);
+        assertTrue(topLeft.getY() >= -1);
+        assertTrue(bottomRight.getX() <= width + 1);
+        assertTrue(bottomRight.getY() <= height + 1);
+        assertEquals(width / 2, (topLeft.getX() + bottomRight.getX()) / 2, 2);
+        assertEquals(height / 2, (topLeft.getY() + bottomRight.getY()) / 2, 2);
+    }
+
+    private static Point2D viewportAnchor(Editor editor, double horizontalFraction, double verticalFraction) {
+        ScrollPane scroll = editor.node("canvas-scroll", ScrollPane.class);
+        return new Point2D(scroll.getViewportBounds().getWidth() * horizontalFraction,
+                scroll.getViewportBounds().getHeight() * verticalFraction);
+    }
+
+    private static Point2D logicalAt(Editor editor, Point2D anchor) {
+        Node visibleArea = editor.node("canvas-scroll", ScrollPane.class).lookup(".viewport");
+        assertNotNull(visibleArea);
+        return editor.canvas().sceneToLocal(visibleArea.localToScene(anchor));
+    }
+
+    private static void assertPointEquals(Point2D expected, Point2D actual) {
+        assertEquals(expected.getX(), actual.getX(), 1);
+        assertEquals(expected.getY(), actual.getY(), 1);
+    }
+
+    private static void wheel(Editor editor, Point2D anchor, double delta,
+                              boolean control, boolean command, boolean direct) {
+        Point2D logical = logicalAt(editor, anchor);
+        Point2D scene = editor.canvas().localToScene(logical);
+        Point2D screen = editor.canvas().localToScreen(logical);
+        assertNotNull(screen);
+        Event.fireEvent(editor.canvas(), new ScrollEvent(ScrollEvent.SCROLL,
+                scene.getX(), scene.getY(), screen.getX(), screen.getY(),
+                false, control, false, command, direct, false,
+                0, delta, 0, delta, ScrollEvent.HorizontalTextScrollUnits.NONE, 0,
+                ScrollEvent.VerticalTextScrollUnits.NONE, 0, direct ? 2 : 0,
+                new PickResult(editor.canvas(), new Point3D(logical.getX(), logical.getY(), 0), 0)));
+    }
+
+    private static void pinch(Editor editor, Point2D anchor, double factor) {
+        Point2D logical = logicalAt(editor, anchor);
+        Point2D scene = editor.canvas().localToScene(logical);
+        Point2D screen = editor.canvas().localToScreen(logical);
+        assertNotNull(screen);
+        Event.fireEvent(editor.canvas(), new ZoomEvent(ZoomEvent.ZOOM,
+                scene.getX(), scene.getY(), screen.getX(), screen.getY(),
+                false, false, false, false, false, false, factor, factor,
+                new PickResult(editor.canvas(), new Point3D(logical.getX(), logical.getY(), 0), 0)));
     }
 
     private static void key(Node target, KeyCode code) {
@@ -571,6 +845,12 @@ class EditorInteractionTest {
 
         private ToggleButton toggle(String id) {
             return node(id, ToggleButton.class);
+        }
+
+        private void resize(double width, double height) {
+            pane.resize(width, height);
+            pane.applyCss();
+            pane.layout();
         }
     }
 }

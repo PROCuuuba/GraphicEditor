@@ -88,7 +88,7 @@ class VectorAcceptanceTest {
             editor.node("polygon-finish", Button.class).fire();
 
             assertEquals(1, editor.model().getShapes().size());
-            assertEquals(List.of(new Vertex(100, 100), new Vertex(220, 100),
+            assertVertices(List.of(new Vertex(100, 100), new Vertex(220, 100),
                     new Vertex(100, 220)), editor.model().getShapes().getFirst().getVertices());
             assertTrue(editor.model().getPixels().isEmpty());
             assertTrue(editor.node("polygon-finish", Button.class).isDisabled());
@@ -130,8 +130,8 @@ class VectorAcceptanceTest {
             ListView<?> polygons = editor.node("polygon-list", ListView.class);
             assertEquals(2, polygons.getItems().size());
             assertEquals(1, polygons.getSelectionModel().getSelectedIndex());
-            assertEquals(new Vertex(100, 100), editor.model().getShapes().getFirst().getVertices().getFirst());
-            assertEquals(new Vertex(300, 100), editor.model().getShapes().getLast().getVertices().getFirst());
+            assertVertex(new Vertex(100, 100), editor.model().getShapes().getFirst().getVertices().getFirst());
+            assertVertex(new Vertex(300, 100), editor.model().getShapes().getLast().getVertices().getFirst());
             assertTrue(editor.model().getPixels().isEmpty());
         });
     }
@@ -160,6 +160,7 @@ class VectorAcceptanceTest {
             Shape updated = editor.model().getShapes().getFirst();
             assertNotSame(original, updated);
             assertEquals(original.getVertices(), updated.getVertices());
+            assertSame(VectorStyle.geometryOf(original), VectorStyle.geometryOf(updated));
             assertSame(untouched, editor.model().getShapes().getLast());
             assertEquals(new VectorStyle(true, Color.RED, true, Color.BLACK, 6,
                     true, Color.MAGENTA, 40, 30, 0), VectorStyle.from(updated));
@@ -170,6 +171,147 @@ class VectorAcceptanceTest {
             assertColor(image, 140, 100, Color.BLACK);
             assertColor(image, 200, 170, Color.MAGENTA);
             assertColor(image, 440, 140, Color.WHITE);
+        });
+    }
+
+    @Test
+    void appearanceControlsImmediatelyUpdateOnlyTheSelectedPolygon() throws Exception {
+        withEditor(editor -> {
+            editor.toggle("mode-polygon").fire();
+            finishSquare(editor, 100, 100, 80);
+            finishSquare(editor, 400, 100, 80);
+            Shape original = editor.model().getShapes().getFirst();
+            Shape untouched = editor.model().getShapes().getLast();
+            editor.node("polygon-list", ListView.class).getSelectionModel().select(0);
+
+            enable(editor, "fill-enabled", true);
+            assertTrue(VectorStyle.from(editor.model().getShapes().getFirst()).fillEnabled());
+            editor.node("fill-color", ColorPicker.class).setValue(Color.RED);
+            assertEquals(Color.RED, VectorStyle.from(editor.model().getShapes().getFirst()).fillColor());
+            enable(editor, "border-enabled", false);
+            assertFalse(VectorStyle.from(editor.model().getShapes().getFirst()).borderEnabled());
+            enable(editor, "border-enabled", true);
+            editor.node("border-color", ColorPicker.class).setValue(Color.DARKGREEN);
+            assertEquals(Color.DARKGREEN, VectorStyle.from(editor.model().getShapes().getFirst()).borderColor());
+            setSpinner(editor, "border-width", 6);
+            assertEquals(6, VectorStyle.from(editor.model().getShapes().getFirst()).borderWidth());
+            enable(editor, "shadow-enabled", true);
+            assertTrue(VectorStyle.from(editor.model().getShapes().getFirst()).shadowEnabled());
+            editor.node("shadow-color", ColorPicker.class).setValue(Color.MAGENTA);
+            assertEquals(Color.MAGENTA, VectorStyle.from(editor.model().getShapes().getFirst()).shadowColor());
+            setSpinner(editor, "shadow-x", 40);
+            assertEquals(40, VectorStyle.from(editor.model().getShapes().getFirst()).shadowOffsetX());
+            setSpinner(editor, "shadow-y", 30);
+            assertEquals(30, VectorStyle.from(editor.model().getShapes().getFirst()).shadowOffsetY());
+            setSpinner(editor, "shadow-blur", 0);
+            assertEquals(0, VectorStyle.from(editor.model().getShapes().getFirst()).shadowBlur());
+
+            Shape updated = editor.model().getShapes().getFirst();
+            assertNotSame(original, updated);
+            assertEquals(original.getVertices(), updated.getVertices());
+            assertSame(untouched, editor.model().getShapes().getLast());
+            assertEquals(new VectorStyle(true, Color.RED, true, Color.DARKGREEN, 6,
+                    true, Color.MAGENTA, 40, 30, 0), VectorStyle.from(updated));
+            assertSame(VectorStyle.geometryOf(original), VectorStyle.geometryOf(updated));
+            editor.canvas().setSelectedShape(null);
+            editor.canvas().renderAll();
+            PixelReader image = snapshot(editor.canvas());
+            assertColor(image, 140, 140, Color.RED);
+            assertColor(image, 140, 100, Color.DARKGREEN);
+            assertColor(image, 200, 170, Color.MAGENTA);
+            assertColor(image, 440, 140, Color.WHITE);
+        });
+    }
+
+    @Test
+    void selectingPolygonsRestoresAllControlsWithoutReplacingEitherShape() throws Exception {
+        withEditor(editor -> {
+            editor.toggle("mode-polygon").fire();
+            finishSquare(editor, 100, 100, 80);
+            enable(editor, "fill-enabled", true);
+            editor.node("fill-color", ColorPicker.class).setValue(Color.RED);
+            setSpinner(editor, "border-width", 4);
+            enable(editor, "shadow-enabled", true);
+            editor.node("shadow-color", ColorPicker.class).setValue(Color.BLUE);
+            setSpinner(editor, "shadow-x", 20);
+            setSpinner(editor, "shadow-y", -15);
+            setSpinner(editor, "shadow-blur", 12);
+            Shape first = editor.model().getShapes().getFirst();
+            finishSquare(editor, 400, 100, 80);
+            enable(editor, "fill-enabled", false);
+            editor.node("border-color", ColorPicker.class).setValue(Color.DARKORANGE);
+            setSpinner(editor, "border-width", 8);
+            enable(editor, "shadow-enabled", false);
+            Shape second = editor.model().getShapes().getLast();
+
+            ListView<?> list = editor.node("polygon-list", ListView.class);
+            for (int index : List.of(0, 1, 0, 1)) {
+                list.getSelectionModel().select(index);
+                assertControlsStyle(editor, VectorStyle.from(index == 0 ? first : second));
+                assertSame(first, editor.model().getShapes().getFirst());
+                assertSame(second, editor.model().getShapes().getLast());
+            }
+        });
+    }
+
+    @Test
+    void draftAppearanceChangesDoNotModifyThePreviouslySelectedPolygon() throws Exception {
+        withEditor(editor -> {
+            editor.toggle("mode-polygon").fire();
+            finishSquare(editor, 100, 100, 80);
+            Shape existing = editor.model().getShapes().getFirst();
+            click(editor.canvas(), 400, 100);
+            enable(editor, "fill-enabled", true);
+            editor.node("fill-color", ColorPicker.class).setValue(Color.RED);
+            enable(editor, "border-enabled", false);
+            enable(editor, "shadow-enabled", true);
+            editor.node("shadow-color", ColorPicker.class).setValue(Color.MAGENTA);
+            setSpinner(editor, "shadow-x", 20);
+            setSpinner(editor, "shadow-y", -10);
+            setSpinner(editor, "shadow-blur", 4);
+
+            VectorStyle draftStyle = new VectorStyle(true, Color.RED, false, Color.BLACK, 2,
+                    true, Color.MAGENTA, 20, -10, 4);
+            ListView<?> list = editor.node("polygon-list", ListView.class);
+            list.getSelectionModel().clearSelection();
+            list.getSelectionModel().select(0);
+            assertControlsStyle(editor, draftStyle);
+            assertSame(existing, editor.model().getShapes().getFirst());
+            assertTrue(editor.node("polygon-apply", Button.class).isDisabled());
+            editor.node("polygon-apply", Button.class).fire();
+            assertSame(existing, editor.model().getShapes().getFirst());
+            click(editor.canvas(), 480, 100);
+            click(editor.canvas(), 480, 180);
+            click(editor.canvas(), 400, 180);
+            editor.node("polygon-finish", Button.class).fire();
+
+            assertEquals(2, editor.model().getShapes().size());
+            assertSame(existing, editor.model().getShapes().getFirst());
+            assertEquals(draftStyle, VectorStyle.from(editor.model().getShapes().getLast()));
+        });
+    }
+
+    @Test
+    void cancellingTheDraftRestoresSelectedAppearanceBeforeFurtherLiveChanges() throws Exception {
+        withEditor(editor -> {
+            editor.toggle("mode-polygon").fire();
+            finishSquare(editor, 100, 100, 80);
+            Shape existing = editor.model().getShapes().getFirst();
+            click(editor.canvas(), 400, 100);
+            enable(editor, "fill-enabled", true);
+            editor.node("fill-color", ColorPicker.class).setValue(Color.RED);
+            enable(editor, "shadow-enabled", true);
+            editor.node("shadow-color", ColorPicker.class).setValue(Color.MAGENTA);
+            editor.node("polygon-cancel", Button.class).fire();
+
+            assertSame(existing, editor.model().getShapes().getFirst());
+            assertControlsStyle(editor, VectorStyle.from(existing));
+            assertFalse(editor.node("polygon-apply", Button.class).isDisabled());
+            setSpinner(editor, "border-width", 6);
+            VectorStyle updated = VectorStyle.from(editor.model().getShapes().getFirst());
+            assertEquals(6, updated.borderWidth());
+            assertFalse(updated.fillEnabled());
+            assertFalse(updated.shadowEnabled());
         });
     }
 
@@ -358,6 +500,19 @@ class VectorAcceptanceTest {
         spinner.getValueFactory().setValue(value);
     }
 
+    private static void assertControlsStyle(Editor editor, VectorStyle style) {
+        assertEquals(style.fillEnabled(), editor.node("fill-enabled", CheckBox.class).isSelected());
+        assertEquals(style.fillColor(), editor.node("fill-color", ColorPicker.class).getValue());
+        assertEquals(style.borderEnabled(), editor.node("border-enabled", CheckBox.class).isSelected());
+        assertEquals(style.borderColor(), editor.node("border-color", ColorPicker.class).getValue());
+        assertEquals(style.borderWidth(), editor.node("border-width", Spinner.class).getValue());
+        assertEquals(style.shadowEnabled(), editor.node("shadow-enabled", CheckBox.class).isSelected());
+        assertEquals(style.shadowColor(), editor.node("shadow-color", ColorPicker.class).getValue());
+        assertEquals(style.shadowOffsetX(), editor.node("shadow-x", Spinner.class).getValue());
+        assertEquals(style.shadowOffsetY(), editor.node("shadow-y", Spinner.class).getValue());
+        assertEquals(style.shadowBlur(), editor.node("shadow-blur", Spinner.class).getValue());
+    }
+
     private static boolean effectivelyVisible(Node node) {
         for (Node current = node; current != null; current = current.getParent()) {
             if (!current.isVisible()) {
@@ -365,6 +520,18 @@ class VectorAcceptanceTest {
             }
         }
         return true;
+    }
+
+    private static void assertVertices(List<Vertex> expected, List<Vertex> actual) {
+        assertEquals(expected.size(), actual.size());
+        for (int index = 0; index < expected.size(); index++) {
+            assertVertex(expected.get(index), actual.get(index));
+        }
+    }
+
+    private static void assertVertex(Vertex expected, Vertex actual) {
+        assertEquals(expected.x(), actual.x(), 1e-9);
+        assertEquals(expected.y(), actual.y(), 1e-9);
     }
 
     private static void withEditor(Consumer<Editor> assertions) throws Exception {

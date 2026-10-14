@@ -11,19 +11,27 @@ import javafx.scene.control.MenuButton;
 import javafx.scene.control.MenuItem;
 import javafx.scene.control.ScrollPane;
 import javafx.scene.control.Tooltip;
+import javafx.scene.input.ScrollEvent;
+import javafx.scene.input.ZoomEvent;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Region;
 import javafx.scene.layout.StackPane;
 import javafx.scene.transform.Scale;
 
+import java.util.Objects;
+
 public final class CanvasViewport extends BorderPane {
     private final DrawingCanvas canvas;
     private final Scale scale = new Scale(1, 1, 0, 0);
+    private final Group sheet;
     private final ScrollPane scroll;
     private final StackPane content;
     private final Label zoomLabel = new Label("100%");
     private double zoom = 1;
+    private boolean automaticFit = true;
+    private boolean fitting;
+    private Runnable beforeZoom = () -> {};
 
     public CanvasViewport(DrawingCanvas canvas) {
         this.canvas = canvas;
@@ -31,10 +39,10 @@ public final class CanvasViewport extends BorderPane {
         StackPane frame = new StackPane(canvas);
         frame.getStyleClass().add("workspace-sheet");
         frame.setMaxSize(Region.USE_PREF_SIZE, Region.USE_PREF_SIZE);
-        Group scaled = new Group(frame);
-        scaled.getTransforms().add(scale);
-        content = new StackPane(new Group(scaled));
-        content.setAlignment(Pos.TOP_LEFT);
+        sheet = new Group(frame);
+        sheet.getTransforms().add(scale);
+        content = new StackPane(new Group(sheet));
+        content.setAlignment(Pos.CENTER);
         content.getStyleClass().add("workspace");
         scroll = new ScrollPane(content);
         scroll.setId("canvas-scroll");
@@ -48,41 +56,85 @@ public final class CanvasViewport extends BorderPane {
                 zoomLabel,
                 button("+", "zoom-in", "Увеличить • Ctrl/Cmd + +", this::zoomIn),
                 button("100%", "zoom-reset", "Масштаб 100% • Ctrl/Cmd + 0", this::resetZoom),
-                button("Вписать", "zoom-fit", "Вписать холст в окно • Ctrl/Cmd + 9", this::fitToViewport),
+                button("Вписать", "zoom-fit", "Автоматически вписывать холст при изменении окна • Ctrl/Cmd + 9", this::fitToViewport),
                 shortcutsMenu());
         toolbar.setAlignment(Pos.CENTER_LEFT);
         toolbar.getStyleClass().add("zoom-toolbar");
         setTop(toolbar);
-        scroll.addEventFilter(javafx.scene.input.ScrollEvent.SCROLL, event -> {
-            if ((event.isShortcutDown() || event.isControlDown()) && event.getDeltaY() != 0) {
-                Node viewport = viewportNode();
-                Point2D anchor = viewport.sceneToLocal(event.getSceneX(), event.getSceneY());
-                zoomAt(zoom * (event.getDeltaY() > 0 ? 1.25 : 0.8), anchor.getX(), anchor.getY());
+        scroll.viewportBoundsProperty().addListener((observable, previous, current) -> {
+            if (automaticFit && !fitting) requestLayout();
+        });
+        scroll.addEventFilter(ScrollEvent.SCROLL, event -> {
+            boolean modified = event.isShortcutDown() || event.isControlDown();
+            if ((!event.isDirect() || modified) && !event.isAltDown() && !event.isShiftDown()
+                    && Double.isFinite(event.getDeltaY()) && event.getDeltaY() != 0) {
+                double factor = Math.exp(Math.clamp(event.getDeltaY(), -240, 240) * 0.005);
+                gestureZoom(factor, event.getSceneX(), event.getSceneY());
                 event.consume();
             }
+        });
+        scroll.addEventFilter(ZoomEvent.ZOOM, event -> {
+            double factor = event.getZoomFactor();
+            if (Double.isFinite(factor) && factor > 0) {
+                gestureZoom(factor, event.getSceneX(), event.getSceneY());
+            }
+            event.consume();
         });
     }
 
     public double getZoom() { return zoom; }
+    public void setBeforeZoom(Runnable action) { beforeZoom = Objects.requireNonNull(action); }
     public void zoomIn() { setZoom(zoom * 1.25); }
     public void zoomOut() { setZoom(zoom / 1.25); }
     public void resetZoom() { setZoom(1); }
 
     public void setZoom(double value) {
+        if (!Double.isFinite(value)) throw new IllegalArgumentException("Некорректный масштаб");
+        automaticFit = false;
         Bounds bounds = scroll.getViewportBounds();
         zoomAt(value, bounds.getWidth() / 2, bounds.getHeight() / 2);
     }
 
     public void fitToViewport() {
-        Bounds bounds = scroll.getViewportBounds();
-        if (bounds.getWidth() <= 0 || bounds.getHeight() <= 0) return;
-        double width = Math.max(1, bounds.getWidth() - content.getInsets().getLeft()
-                - content.getInsets().getRight() - 24);
-        double height = Math.max(1, bounds.getHeight() - content.getInsets().getTop()
-                - content.getInsets().getBottom() - 24);
-        setZoom(Math.min(width / canvas.getWidth(), height / canvas.getHeight()));
-        scroll.setHvalue(0);
-        scroll.setVvalue(0);
+        automaticFit = true;
+        requestLayout();
+        relayout();
+    }
+
+    @Override
+    protected void layoutChildren() {
+        super.layoutChildren();
+        scroll.layout();
+        if (!automaticFit || fitting) return;
+        fitting = true;
+        try {
+            for (int attempt = 0; attempt < 3; attempt++) {
+                Bounds bounds = scroll.getViewportBounds();
+                Bounds sheetBounds = sheet.getLayoutBounds();
+                if (bounds.getWidth() <= 0 || bounds.getHeight() <= 0
+                        || sheetBounds.getWidth() <= 0 || sheetBounds.getHeight() <= 0) break;
+                double width = Math.max(1, bounds.getWidth() - content.getInsets().getLeft()
+                        - content.getInsets().getRight() - 2);
+                double height = Math.max(1, bounds.getHeight() - content.getInsets().getTop()
+                        - content.getInsets().getBottom() - 2);
+                double next = Math.clamp(Math.min(width / sheetBounds.getWidth(),
+                        height / sheetBounds.getHeight()), 0.25, 4);
+                if (Math.abs(next - zoom) < 0.000001) break;
+                updateScale(next);
+                scroll.requestLayout();
+                scroll.layout();
+            }
+            scroll.setHvalue(0.5);
+            scroll.setVvalue(0.5);
+        } finally {
+            fitting = false;
+        }
+    }
+
+    private void gestureZoom(double factor, double sceneX, double sceneY) {
+        automaticFit = false;
+        Point2D anchor = viewportNode().sceneToLocal(sceneX, sceneY);
+        zoomAt(Math.clamp(zoom * factor, 0.25, 4), anchor.getX(), anchor.getY());
     }
 
     private void zoomAt(double value, double anchorX, double anchorY) {
@@ -91,11 +143,7 @@ public final class CanvasViewport extends BorderPane {
         if (next == zoom) return;
         Node viewport = viewportNode();
         Point2D logical = canvas.sceneToLocal(viewport.localToScene(anchorX, anchorY));
-        zoom = next;
-        scale.setX(zoom);
-        scale.setY(zoom);
-        canvas.setViewZoom(zoom);
-        zoomLabel.setText("%.0f%%".formatted(zoom * 100));
+        updateScale(next);
         relayout();
         Point2D moved = viewport.sceneToLocal(canvas.localToScene(logical));
         double extraX = Math.max(0, content.getLayoutBounds().getWidth() - scroll.getViewportBounds().getWidth());
@@ -105,6 +153,15 @@ public final class CanvasViewport extends BorderPane {
         scroll.setVvalue(extraY == 0 ? 0 : Math.clamp(
                 scroll.getVvalue() + (moved.getY() - anchorY) / extraY, 0, 1));
         relayout();
+    }
+
+    private void updateScale(double value) {
+        beforeZoom.run();
+        zoom = value;
+        scale.setX(zoom);
+        scale.setY(zoom);
+        canvas.setViewZoom(zoom);
+        zoomLabel.setText("%.0f%%".formatted(zoom * 100));
     }
 
     private Node viewportNode() {
@@ -127,7 +184,8 @@ public final class CanvasViewport extends BorderPane {
                 "1 / 2 / 3 — точка / круг / квадрат", "P — полигон, B — кисти",
                 "Enter — завершить, Esc — отменить", "Delete / Backspace — удалить полигон",
                 "Ctrl/Cmd + Enter — применить оформление", "Ctrl/Cmd + + / − — масштаб",
-                "Ctrl/Cmd + 0 — 100%, + 9 — вписать", "Ctrl/Cmd + колесо — масштаб",
+                "Ctrl/Cmd + 0 — 100%, + 9 — авто-вписать", "Колесо мыши / жест прокрутки — масштаб",
+                "Сведение / разведение пальцев — масштаб", "Shift + колесо — прокрутка холста",
                 "Ctrl/Cmd + Shift + Delete — очистить"}) {
             MenuItem item = new MenuItem(shortcut);
             item.setDisable(true);

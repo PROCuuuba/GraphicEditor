@@ -51,6 +51,7 @@ public final class EditorPane extends BorderPane {
     private final Spinner<Double> shadowBlur = spinner("shadow-blur", 0, 50, 5, 1);
     private boolean vectorMode;
     private boolean syncingList;
+    private boolean syncingStyle;
     private Vertex dragPress;
     private Vertex dragOrigin;
     private boolean vertexMoved;
@@ -80,6 +81,13 @@ public final class EditorPane extends BorderPane {
         footer.getStyleClass().add("status-bar");
         setBottom(footer);
         connectDrawing();
+        viewport.setBeforeZoom(() -> {
+            controller.endStroke();
+            if (dragPress != null) {
+                stopVertexDrag();
+                refresh();
+            }
+        });
         loadStyle(polygons.getStyle());
         refresh();
         addEventFilter(KeyEvent.KEY_PRESSED, this::handleShortcut);
@@ -128,6 +136,7 @@ public final class EditorPane extends BorderPane {
             polygons.cancelVertexDrag();
             stopVertexDrag();
             polygons.cancelPolygon();
+            restoreSelectedStyle();
             refresh();
         });
         HBox modeButtons = new HBox(8, rasterMode, polygonMode);
@@ -201,6 +210,7 @@ public final class EditorPane extends BorderPane {
             polygons.cancelVertexDrag();
             stopVertexDrag();
             polygons.cancelPolygon();
+            restoreSelectedStyle();
             refresh();
         });
         polygonList.setId("polygon-list");
@@ -215,9 +225,11 @@ public final class EditorPane extends BorderPane {
         });
         polygonList.getSelectionModel().selectedIndexProperty().addListener((observable, previous, index) -> {
             if (!syncingList) {
+                VectorStyle draftStyle = polygons.getDraftVertices().isEmpty() ? null : readStyle();
                 stopVertexDrag();
                 polygons.selectShape(index.intValue());
-                if (polygons.getSelectedShape() != null) loadStyle(polygons.getStyle());
+                if (draftStyle != null) polygons.setStyle(draftStyle);
+                else if (polygons.getSelectedShape() != null) loadStyle(polygons.getStyle());
                 refresh();
             }
         });
@@ -231,8 +243,9 @@ public final class EditorPane extends BorderPane {
         borderEnabled.setTooltip(new Tooltip("Добавить или убрать контур с выбранной толщиной"));
         shadowEnabled.setTooltip(new Tooltip("Добавить или убрать тень со смещением и размытием"));
         apply.setId("polygon-apply");
-        apply.setTooltip(new Tooltip("Изменить оформление выбранного полигона • Ctrl/Cmd + Enter"));
+        apply.setTooltip(new Tooltip("Оформление выбранного полигона меняется сразу • Ctrl/Cmd + Enter"));
         apply.setOnAction(event -> {
+            if (!polygons.getDraftVertices().isEmpty()) return;
             stopVertexDrag();
             polygons.setStyle(readStyle());
             polygons.applyStyleToSelected();
@@ -259,6 +272,15 @@ public final class EditorPane extends BorderPane {
                 shadowEnabled, shadowColor, shadow, apply);
         for (Button button : List.of(finish, cancel, apply, delete)) button.setMaxWidth(Double.MAX_VALUE);
         for (ColorPicker picker : List.of(fillColor, borderColor, shadowColor)) picker.setMaxWidth(Double.MAX_VALUE);
+        for (CheckBox box : List.of(fillEnabled, borderEnabled, shadowEnabled)) {
+            box.selectedProperty().addListener((observable, previous, value) -> updateStyle());
+        }
+        for (ColorPicker picker : List.of(fillColor, borderColor, shadowColor)) {
+            picker.valueProperty().addListener((observable, previous, value) -> updateStyle());
+        }
+        for (Spinner<Double> spinner : List.of(borderWidth, shadowX, shadowY, shadowBlur)) {
+            spinner.valueProperty().addListener((observable, previous, value) -> updateStyle());
+        }
     }
 
     private VectorStyle readStyle() {
@@ -269,16 +291,40 @@ public final class EditorPane extends BorderPane {
     }
 
     private void loadStyle(VectorStyle style) {
-        fillEnabled.setSelected(style.fillEnabled());
-        fillColor.setValue(style.fillColor());
-        borderEnabled.setSelected(style.borderEnabled());
-        borderColor.setValue(style.borderColor());
-        borderWidth.getValueFactory().setValue(style.borderWidth());
-        shadowEnabled.setSelected(style.shadowEnabled());
-        shadowColor.setValue(style.shadowColor());
-        shadowX.getValueFactory().setValue(style.shadowOffsetX());
-        shadowY.getValueFactory().setValue(style.shadowOffsetY());
-        shadowBlur.getValueFactory().setValue(style.shadowBlur());
+        syncingStyle = true;
+        try {
+            fillEnabled.setSelected(style.fillEnabled());
+            fillColor.setValue(style.fillColor());
+            borderEnabled.setSelected(style.borderEnabled());
+            borderColor.setValue(style.borderColor());
+            borderWidth.getValueFactory().setValue(style.borderWidth());
+            shadowEnabled.setSelected(style.shadowEnabled());
+            shadowColor.setValue(style.shadowColor());
+            shadowX.getValueFactory().setValue(style.shadowOffsetX());
+            shadowY.getValueFactory().setValue(style.shadowOffsetY());
+            shadowBlur.getValueFactory().setValue(style.shadowBlur());
+        } finally {
+            syncingStyle = false;
+        }
+    }
+
+    private void updateStyle() {
+        if (syncingStyle) return;
+        polygons.setStyle(readStyle());
+        if (polygons.getDraftVertices().isEmpty() && polygons.getSelectedShape() != null) {
+            stopVertexDrag();
+            polygons.applyStyleToSelected();
+        }
+        refresh();
+    }
+
+    private void restoreSelectedStyle() {
+        Shape selected = polygons.getSelectedShape();
+        if (selected != null) {
+            VectorStyle style = VectorStyle.from(selected);
+            polygons.setStyle(style);
+            loadStyle(style);
+        }
     }
 
     private ToggleButton toolButton(Tool tool) {
@@ -300,38 +346,43 @@ public final class EditorPane extends BorderPane {
         canvas.setFocusTraversable(true);
         canvas.setOnMousePressed(event -> {
             if (event.getButton() == MouseButton.PRIMARY) {
+                double x = logicalCoordinate(event.getX());
+                double y = logicalCoordinate(event.getY());
                 canvas.requestFocus();
                 if (vectorMode) {
-                    if (polygons.startVertexDrag(event.getX(), event.getY(), snapTolerance())) {
-                        dragPress = new Vertex(event.getX(), event.getY());
+                    if (polygons.startVertexDrag(x, y, snapTolerance())) {
+                        dragPress = new Vertex(x, y);
                         dragOrigin = polygons.getSelectedShape().getVertices().stream().min(
                                 java.util.Comparator.comparingDouble(vertex ->
-                                        Math.hypot(vertex.x() - event.getX(), vertex.y() - event.getY()))).orElseThrow();
+                                        Math.hypot(vertex.x() - x, vertex.y() - y))).orElseThrow();
                         vertexMoved = false;
                         refresh();
-                    } else placeVertex(event.getX(), event.getY());
-                } else draw(controller.beginStroke(event.getX(), event.getY()));
+                    } else placeVertex(x, y);
+                } else draw(controller.beginStroke(x, y));
                 event.consume();
             }
         });
         canvas.setOnMouseDragged(event -> {
             if (event.isPrimaryButtonDown()) {
+                double x = logicalCoordinate(event.getX());
+                double y = logicalCoordinate(event.getY());
                 if (vectorMode && dragPress != null && polygons.isDraggingVertex()) {
-                    if (vertexMoved || Math.hypot(event.getX() - dragPress.x(),
-                            event.getY() - dragPress.y()) * viewport.getZoom() >= 2) {
+                    if (vertexMoved || Math.hypot(x - dragPress.x(),
+                            y - dragPress.y()) * viewport.getZoom() >= 2) {
                         if (!vertexMoved) loadStyle(polygons.getStyle());
                         vertexMoved = true;
-                        polygons.dragVertexTo(dragOrigin.x() + event.getX() - dragPress.x(),
-                                dragOrigin.y() + event.getY() - dragPress.y());
+                        polygons.dragVertexTo(logicalCoordinate(dragOrigin.x() + x - dragPress.x()),
+                                logicalCoordinate(dragOrigin.y() + y - dragPress.y()));
                         refresh();
                     }
-                } else if (!vectorMode) draw(controller.continueStroke(event.getX(), event.getY()));
+                } else if (!vectorMode) draw(controller.continueStroke(x, y));
                 event.consume();
             }
         });
         canvas.setOnMouseMoved(event -> {
             if (vectorMode) {
-                Vertex snap = polygons.findSnapVertex(event.getX(), event.getY(), snapTolerance());
+                Vertex snap = polygons.findSnapVertex(logicalCoordinate(event.getX()),
+                        logicalCoordinate(event.getY()), snapTolerance());
                 canvas.setSnapVertex(snap);
                 canvas.setCursor(snap != null && polygons.getDraftVertices().isEmpty()
                         ? Cursor.HAND : Cursor.CROSSHAIR);
@@ -377,7 +428,7 @@ public final class EditorPane extends BorderPane {
         }
         finish.setDisable(polygons.getDraftVertices().size() < 3);
         cancel.setDisable(polygons.getDraftVertices().isEmpty() && !polygons.isDraggingVertex());
-        apply.setDisable(index < 0);
+        apply.setDisable(index < 0 || !polygons.getDraftVertices().isEmpty());
         delete.setDisable(index < 0);
         canvas.setDraftVertices(polygons.getDraftVertices());
         canvas.setSelectedShape(vectorMode ? polygons.getSelectedShape() : null);
@@ -399,6 +450,11 @@ public final class EditorPane extends BorderPane {
     }
 
     private double snapTolerance() { return 10 / viewport.getZoom(); }
+
+    private static double logicalCoordinate(double value) {
+        double integer = Math.rint(value);
+        return Math.abs(value - integer) < 0.000000001 ? integer : value;
+    }
 
     private void placeVertex(double x, double y) {
         polygons.setStyle(readStyle());
@@ -463,6 +519,7 @@ public final class EditorPane extends BorderPane {
                     polygons.cancelVertexDrag();
                     stopVertexDrag();
                     polygons.cancelPolygon();
+                    restoreSelectedStyle();
                     controller.endStroke();
                     refresh();
                 }

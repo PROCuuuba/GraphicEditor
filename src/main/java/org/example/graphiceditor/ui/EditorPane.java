@@ -1,9 +1,10 @@
 package org.example.graphiceditor.ui;
 
-import javafx.geometry.Pos;
+import javafx.scene.Node;
 import javafx.scene.Cursor;
 import javafx.scene.control.*;
 import javafx.scene.input.KeyCode;
+import javafx.scene.input.KeyEvent;
 import javafx.scene.input.MouseButton;
 import javafx.scene.layout.*;
 import javafx.scene.paint.Color;
@@ -14,6 +15,7 @@ import org.example.graphiceditor.model.Pixel;
 import org.example.graphiceditor.model.Tool;
 import org.example.graphiceditor.model.vector.Shape;
 import org.example.graphiceditor.model.vector.VectorStyle;
+import org.example.graphiceditor.model.vector.Vertex;
 
 import java.util.List;
 
@@ -22,6 +24,7 @@ public final class EditorPane extends BorderPane {
     private final EditorController controller;
     private final PolygonController polygons;
     private final DrawingCanvas canvas;
+    private final CanvasViewport viewport;
     private final ToggleGroup selection = new ToggleGroup();
     private final ToggleButton rasterMode = new ToggleButton("Кисти");
     private final ToggleButton polygonMode = new ToggleButton("Полигон");
@@ -33,6 +36,7 @@ public final class EditorPane extends BorderPane {
     private final VBox vectorPanel = new VBox(10);
     private final ListView<Shape> polygonList = new ListView<>();
     private final Button finish = new Button("Завершить полигон");
+    private final Button cancel = new Button("Отменить вершины");
     private final Button apply = new Button("Применить оформление");
     private final Button delete = new Button("Удалить полигон");
     private final CheckBox fillEnabled = new CheckBox("Заливка");
@@ -47,6 +51,9 @@ public final class EditorPane extends BorderPane {
     private final Spinner<Double> shadowBlur = spinner("shadow-blur", 0, 50, 5, 1);
     private boolean vectorMode;
     private boolean syncingList;
+    private Vertex dragPress;
+    private Vertex dragOrigin;
+    private boolean vertexMoved;
 
     public EditorPane() {
         this(new DrawingModel(900, 650));
@@ -61,12 +68,13 @@ public final class EditorPane extends BorderPane {
         this.controller = controller;
         polygons = new PolygonController(model);
         canvas = new DrawingCanvas(model);
+        viewport = new CanvasViewport(canvas);
         colorPicker = new ColorPicker(controller.getColor());
         brushSize.setValue(controller.getBrushSize());
         getStyleClass().add("editor");
         setTop(header());
         setLeft(controls());
-        setCenter(workspace());
+        setCenter(viewport);
         status.setId("drawing-status");
         HBox footer = new HBox(status);
         footer.getStyleClass().add("status-bar");
@@ -74,20 +82,16 @@ public final class EditorPane extends BorderPane {
         connectDrawing();
         loadStyle(polygons.getStyle());
         refresh();
-        setOnKeyPressed(event -> {
-            if (vectorMode && event.getCode() == KeyCode.ESCAPE) {
-                polygons.cancelPolygon();
-                refresh();
-            } else if (vectorMode && event.getCode() == KeyCode.ENTER && !finish.isDisabled()) {
-                finish.fire();
-            }
-        });
+        addEventFilter(KeyEvent.KEY_PRESSED, this::handleShortcut);
         sceneProperty().addListener((observable, oldScene, newScene) -> {
             if (newScene != null) {
                 newScene.windowProperty().addListener((property, oldWindow, newWindow) -> {
                     if (newWindow != null) {
                         newWindow.focusedProperty().addListener((focus, wasFocused, isFocused) -> {
-                            if (!isFocused) controller.endStroke();
+                            if (!isFocused) {
+                                controller.endStroke();
+                                stopVertexDrag();
+                            }
                         });
                     }
                 });
@@ -113,7 +117,7 @@ public final class EditorPane extends BorderPane {
         polygonMode.setToggleGroup(modes);
         rasterMode.setSelected(true);
         rasterMode.setTooltip(new Tooltip("Рисование точкой, круглой или квадратной кистью"));
-        polygonMode.setTooltip(new Tooltip("Нажмите на холст для задания вершин, затем завершите полигон"));
+        polygonMode.setTooltip(new Tooltip("Полигон • P. Для замыкания нажмите первую вершину; готовые вершины можно перетаскивать"));
         modes.selectedToggleProperty().addListener((observable, previous, selected) -> {
             if (selected == null) {
                 if (previous != null) previous.setSelected(true);
@@ -121,6 +125,8 @@ public final class EditorPane extends BorderPane {
             }
             vectorMode = selected == polygonMode;
             controller.endStroke();
+            polygons.cancelVertexDrag();
+            stopVertexDrag();
             polygons.cancelPolygon();
             refresh();
         });
@@ -166,12 +172,8 @@ public final class EditorPane extends BorderPane {
         Button clear = new Button("Очистить холст");
         clear.setId("clear-canvas");
         clear.setMaxWidth(Double.MAX_VALUE);
-        clear.setTooltip(new Tooltip("Удалить растровые штрихи, полигоны и незавершённые вершины"));
-        clear.setOnAction(event -> {
-            controller.clear();
-            polygons.clear();
-            refresh();
-        });
+        clear.setTooltip(new Tooltip("Очистить холст • Ctrl/Cmd + Shift + Delete"));
+        clear.setOnAction(event -> clearDrawing());
         VBox bottom = new VBox(10, new Separator(), clear);
         bottom.getStyleClass().add("clear-panel");
         BorderPane panel = new BorderPane(scroll);
@@ -193,10 +195,11 @@ public final class EditorPane extends BorderPane {
                 status.setText(exception.getMessage());
             }
         });
-        Button cancel = new Button("Отменить вершины");
         cancel.setId("polygon-cancel");
-        cancel.setTooltip(new Tooltip("Сбросить незавершённую фигуру; Escape"));
+        cancel.setTooltip(new Tooltip("Отменить вершины или текущее перетаскивание • Escape"));
         cancel.setOnAction(event -> {
+            polygons.cancelVertexDrag();
+            stopVertexDrag();
             polygons.cancelPolygon();
             refresh();
         });
@@ -212,6 +215,7 @@ public final class EditorPane extends BorderPane {
         });
         polygonList.getSelectionModel().selectedIndexProperty().addListener((observable, previous, index) -> {
             if (!syncingList) {
+                stopVertexDrag();
                 polygons.selectShape(index.intValue());
                 if (polygons.getSelectedShape() != null) loadStyle(polygons.getStyle());
                 refresh();
@@ -227,15 +231,17 @@ public final class EditorPane extends BorderPane {
         borderEnabled.setTooltip(new Tooltip("Добавить или убрать контур с выбранной толщиной"));
         shadowEnabled.setTooltip(new Tooltip("Добавить или убрать тень со смещением и размытием"));
         apply.setId("polygon-apply");
-        apply.setTooltip(new Tooltip("Изменить оформление выбранного полигона"));
+        apply.setTooltip(new Tooltip("Изменить оформление выбранного полигона • Ctrl/Cmd + Enter"));
         apply.setOnAction(event -> {
+            stopVertexDrag();
             polygons.setStyle(readStyle());
             polygons.applyStyleToSelected();
             refresh();
         });
         delete.setId("polygon-delete");
-        delete.setTooltip(new Tooltip("Удалить только выбранный полигон"));
+        delete.setTooltip(new Tooltip("Удалить выбранный полигон • Delete / Backspace"));
         delete.setOnAction(event -> {
+            stopVertexDrag();
             polygons.deleteSelected();
             refresh();
         });
@@ -275,18 +281,6 @@ public final class EditorPane extends BorderPane {
         shadowBlur.getValueFactory().setValue(style.shadowBlur());
     }
 
-    private ScrollPane workspace() {
-        StackPane frame = new StackPane(canvas);
-        frame.getStyleClass().add("workspace-sheet");
-        frame.setMaxSize(Region.USE_PREF_SIZE, Region.USE_PREF_SIZE);
-        StackPane surround = new StackPane(frame);
-        surround.setAlignment(Pos.TOP_LEFT);
-        surround.getStyleClass().add("workspace");
-        ScrollPane scroll = new ScrollPane(surround);
-        scroll.setPannable(false);
-        return scroll;
-    }
-
     private ToggleButton toolButton(Tool tool) {
         ToggleButton button = new ToggleButton(tool.getDisplayName());
         button.setId("tool-" + tool.name().toLowerCase(java.util.Locale.ROOT));
@@ -303,23 +297,63 @@ public final class EditorPane extends BorderPane {
 
     private void connectDrawing() {
         canvas.setCursor(Cursor.CROSSHAIR);
+        canvas.setFocusTraversable(true);
         canvas.setOnMousePressed(event -> {
             if (event.getButton() == MouseButton.PRIMARY) {
+                canvas.requestFocus();
                 if (vectorMode) {
-                    polygons.addVertex(event.getX(), event.getY());
-                    refresh();
+                    if (polygons.startVertexDrag(event.getX(), event.getY(), snapTolerance())) {
+                        dragPress = new Vertex(event.getX(), event.getY());
+                        dragOrigin = polygons.getSelectedShape().getVertices().stream().min(
+                                java.util.Comparator.comparingDouble(vertex ->
+                                        Math.hypot(vertex.x() - event.getX(), vertex.y() - event.getY()))).orElseThrow();
+                        vertexMoved = false;
+                        refresh();
+                    } else placeVertex(event.getX(), event.getY());
                 } else draw(controller.beginStroke(event.getX(), event.getY()));
                 event.consume();
             }
         });
         canvas.setOnMouseDragged(event -> {
-            if (!vectorMode && event.isPrimaryButtonDown()) {
-                draw(controller.continueStroke(event.getX(), event.getY()));
+            if (event.isPrimaryButtonDown()) {
+                if (vectorMode && dragPress != null && polygons.isDraggingVertex()) {
+                    if (vertexMoved || Math.hypot(event.getX() - dragPress.x(),
+                            event.getY() - dragPress.y()) * viewport.getZoom() >= 2) {
+                        if (!vertexMoved) loadStyle(polygons.getStyle());
+                        vertexMoved = true;
+                        polygons.dragVertexTo(dragOrigin.x() + event.getX() - dragPress.x(),
+                                dragOrigin.y() + event.getY() - dragPress.y());
+                        refresh();
+                    }
+                } else if (!vectorMode) draw(controller.continueStroke(event.getX(), event.getY()));
                 event.consume();
             }
         });
-        canvas.setOnMouseExited(event -> controller.continueStroke(-1, -1));
-        canvas.setOnMouseReleased(event -> controller.endStroke());
+        canvas.setOnMouseMoved(event -> {
+            if (vectorMode) {
+                Vertex snap = polygons.findSnapVertex(event.getX(), event.getY(), snapTolerance());
+                canvas.setSnapVertex(snap);
+                canvas.setCursor(snap != null && polygons.getDraftVertices().isEmpty()
+                        ? Cursor.HAND : Cursor.CROSSHAIR);
+                canvas.renderAll();
+            }
+        });
+        canvas.setOnMouseExited(event -> {
+            controller.continueStroke(-1, -1);
+            canvas.setSnapVertex(null);
+            canvas.renderAll();
+        });
+        canvas.setOnMouseReleased(event -> {
+            if (event.getButton() != MouseButton.PRIMARY) return;
+            controller.endStroke();
+            if (dragPress != null) {
+                Vertex pressed = dragPress;
+                boolean moved = vertexMoved;
+                stopVertexDrag();
+                if (!moved) placeVertex(pressed.x(), pressed.y());
+                else refresh();
+            }
+        });
     }
 
     private void draw(List<Pixel> pixels) {
@@ -342,10 +376,13 @@ public final class EditorPane extends BorderPane {
             syncingList = false;
         }
         finish.setDisable(polygons.getDraftVertices().size() < 3);
+        cancel.setDisable(polygons.getDraftVertices().isEmpty() && !polygons.isDraggingVertex());
         apply.setDisable(index < 0);
         delete.setDisable(index < 0);
         canvas.setDraftVertices(polygons.getDraftVertices());
         canvas.setSelectedShape(vectorMode ? polygons.getSelectedShape() : null);
+        canvas.setSnapVertex(null);
+        canvas.setCursor(Cursor.CROSSHAIR);
         canvas.renderAll();
         updateStatus();
     }
@@ -359,6 +396,84 @@ public final class EditorPane extends BorderPane {
                         polygons.getDraftVertices().size(), model.getShapes().size())
                 : "Инструмент: %s • Элементов: %d • Полигонов: %d".formatted(
                         controller.getTool().getDisplayName(), model.size(), model.getShapes().size()));
+    }
+
+    private double snapTolerance() { return 10 / viewport.getZoom(); }
+
+    private void placeVertex(double x, double y) {
+        polygons.setStyle(readStyle());
+        polygons.placeVertex(x, y, snapTolerance());
+        refresh();
+    }
+
+    private void stopVertexDrag() {
+        polygons.endVertexDrag();
+        dragPress = null;
+        dragOrigin = null;
+        vertexMoved = false;
+    }
+
+    private void clearDrawing() {
+        stopVertexDrag();
+        controller.clear();
+        polygons.clear();
+        refresh();
+    }
+
+    private boolean inputHasFocus() {
+        Node focus = getScene() == null ? null : getScene().getFocusOwner();
+        for (Node node = focus; node != null; node = node.getParent()) {
+            if (node instanceof TextInputControl || node instanceof Spinner<?> || node instanceof ComboBoxBase<?>) return true;
+        }
+        return false;
+    }
+
+    private void handleShortcut(KeyEvent event) {
+        if (inputHasFocus() || event.isAltDown()) return;
+        boolean shortcut = event.isShortcutDown() || event.isControlDown();
+        boolean handled = true;
+        if (shortcut) {
+            switch (event.getCode()) {
+                case PLUS, EQUALS, ADD -> viewport.zoomIn();
+                case MINUS, SUBTRACT -> viewport.zoomOut();
+                case DIGIT0, NUMPAD0 -> viewport.resetZoom();
+                case DIGIT9, NUMPAD9 -> viewport.fitToViewport();
+                case ENTER -> {
+                    if (vectorMode && !apply.isDisabled()) apply.fire();
+                    else handled = false;
+                }
+                case DELETE, BACK_SPACE -> {
+                    if (event.isShiftDown()) clearDrawing();
+                    else handled = false;
+                }
+                default -> handled = false;
+            }
+        } else {
+            switch (event.getCode()) {
+                case DIGIT1, NUMPAD1 -> ((ToggleButton) lookup("#tool-point")).fire();
+                case DIGIT2, NUMPAD2 -> ((ToggleButton) lookup("#tool-circle")).fire();
+                case DIGIT3, NUMPAD3 -> ((ToggleButton) lookup("#tool-square")).fire();
+                case P -> polygonMode.setSelected(true);
+                case B -> rasterMode.setSelected(true);
+                case ENTER -> {
+                    if (vectorMode && !finish.isDisabled()) finish.fire();
+                    else handled = false;
+                }
+                case ESCAPE -> {
+                    polygons.cancelVertexDrag();
+                    stopVertexDrag();
+                    polygons.cancelPolygon();
+                    controller.endStroke();
+                    refresh();
+                }
+                case DELETE, BACK_SPACE -> {
+                    if (vectorMode && !delete.isDisabled()) delete.fire();
+                    else handled = false;
+                }
+                default -> handled = false;
+            }
+        }
+        if (handled) event.consume();
     }
 
     private static Spinner<Double> spinner(String id, double min, double max, double value, double step) {

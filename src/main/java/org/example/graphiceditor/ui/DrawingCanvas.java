@@ -21,6 +21,8 @@ public final class DrawingCanvas extends Canvas implements PixelRenderer {
     private final DrawingModel model;
     private List<Vertex> draft = List.of();
     private Shape selected;
+    private Vertex snapVertex;
+    private double viewZoom = 1;
 
     public DrawingCanvas(DrawingModel model) {
         super(model.getWidth(), model.getHeight());
@@ -35,6 +37,18 @@ public final class DrawingCanvas extends Canvas implements PixelRenderer {
 
     public void setSelectedShape(Shape shape) {
         selected = shape;
+    }
+
+    public void setSnapVertex(Vertex vertex) {
+        snapVertex = vertex;
+    }
+
+    public void setViewZoom(double zoom) {
+        if (!Double.isFinite(zoom) || zoom <= 0) {
+            throw new IllegalArgumentException("Масштаб должен быть конечным и положительным");
+        }
+        viewZoom = zoom;
+        renderAll();
     }
 
     public void renderAll() {
@@ -59,21 +73,26 @@ public final class DrawingCanvas extends Canvas implements PixelRenderer {
         context.save();
         context.setStroke(Color.DODGERBLUE);
         context.setFill(Color.DODGERBLUE);
-        context.setLineWidth(1);
+        context.setLineWidth(1 / viewZoom);
         if (selected != null && model.getShapes().contains(selected)) {
             List<Vertex> vertices = selected.getVertices();
-            context.setLineDashes(5, 4);
+            context.setLineDashes(5 / viewZoom, 4 / viewZoom);
             context.strokePolygon(xs(vertices, 0), ys(vertices, 0), vertices.size());
             context.setLineDashes();
             for (Vertex vertex : vertices) {
-                context.strokeRect(vertex.x() - 3, vertex.y() - 3, 6, 6);
+                context.strokeRect(vertex.x() - 3 / viewZoom, vertex.y() - 3 / viewZoom, 6 / viewZoom, 6 / viewZoom);
             }
         }
         if (!draft.isEmpty()) {
             context.strokePolyline(xs(draft, 0), ys(draft, 0), draft.size());
             for (Vertex vertex : draft) {
-                context.fillOval(vertex.x() - 3, vertex.y() - 3, 6, 6);
+                context.fillOval(vertex.x() - 3 / viewZoom, vertex.y() - 3 / viewZoom, 6 / viewZoom, 6 / viewZoom);
             }
+        }
+        if (snapVertex != null) {
+            context.setStroke(Color.LIMEGREEN);
+            context.setLineWidth(2 / viewZoom);
+            context.strokeOval(snapVertex.x() - 6 / viewZoom, snapVertex.y() - 6 / viewZoom, 12 / viewZoom, 12 / viewZoom);
         }
         context.restore();
     }

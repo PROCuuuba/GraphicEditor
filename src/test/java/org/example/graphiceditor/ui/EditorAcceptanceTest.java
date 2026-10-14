@@ -254,6 +254,24 @@ class EditorAcceptanceTest {
     }
 
     @Test
+    void squareBrushSupportsBothSizeLimits() throws Exception {
+        withEditor(editor -> {
+            editor.button("tool-square").fire();
+            chooseColor(editor, Color.BLUE);
+            editor.brush().setValue(1);
+            click(editor.canvas(), 100.5, 100.5);
+            assertColor(snapshot(editor.canvas()), 100, 100, Color.BLUE);
+            assertColor(snapshot(editor.canvas()), 101, 100, Color.WHITE);
+            editor.brush().setValue(100);
+            click(editor.canvas(), 250, 250);
+            PixelReader image = snapshot(editor.canvas());
+            assertColor(image, 200, 200, Color.BLUE);
+            assertColor(image, 299, 299, Color.BLUE);
+            assertColor(image, 300, 300, Color.WHITE);
+        });
+    }
+
+    @Test
     void brushesAreClippedAtTheCanvasEdges() throws Exception {
         withEditor(editor -> {
             editor.button("tool-square").fire();

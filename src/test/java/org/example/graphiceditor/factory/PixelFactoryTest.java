@@ -45,6 +45,24 @@ class PixelFactoryTest {
     }
 
     @Test
+    void factoriesRejectInvalidCoordinatesAndSizes() {
+        for (Tool tool : Tool.values()) {
+            PixelFactory factory = PixelFactory.forTool(tool);
+            assertThrows(IllegalArgumentException.class, () -> factory.create(-1, 0, 10, Color.RED));
+            assertThrows(IllegalArgumentException.class, () -> factory.create(0, Double.NaN, 10, Color.RED));
+            assertThrows(IllegalArgumentException.class, () -> factory.create(0, 0, 0, Color.RED));
+            assertThrows(IllegalArgumentException.class, () -> factory.create(0, 0, Double.POSITIVE_INFINITY, Color.RED));
+        }
+    }
+
+    @Test
+    void factoriesRejectMissingColor() {
+        for (Tool tool : Tool.values()) {
+            assertThrows(NullPointerException.class, () -> PixelFactory.forTool(tool).create(0, 0, 10, null));
+        }
+    }
+
+    @Test
     @DisplayName("T8: неизвестный инструмент приводит к контролируемой ошибке")
     void rejectsMissingTool() {
         assertThrows(IllegalArgumentException.class, () -> PixelFactory.forTool(null));

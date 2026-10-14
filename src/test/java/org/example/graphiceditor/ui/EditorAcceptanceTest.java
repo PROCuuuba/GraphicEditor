@@ -272,6 +272,17 @@ class EditorAcceptanceTest {
     }
 
     @Test
+    void brushSizeMatchesItsIntegerCaption() throws Exception {
+        withEditor(editor -> {
+            editor.button("tool-square").fire();
+            editor.brush().setValue(12.8);
+            click(editor.canvas(), 100, 100);
+            assertEquals(13, editor.controller().getBrushSize());
+            assertEquals(13, editor.model().getPixels().getLast().getSize());
+        });
+    }
+
+    @Test
     void brushesAreClippedAtTheCanvasEdges() throws Exception {
         withEditor(editor -> {
             editor.button("tool-square").fire();

@@ -217,6 +217,24 @@ class EditorAcceptanceTest {
     }
 
     @Test
+    void pointsAtFractionalCoordinatesAndCanvasLimitsOccupyExactlyOnePixel() throws Exception {
+        withEditor(editor -> {
+            chooseColor(editor, Color.RED);
+            click(editor.canvas(), 0, 0);
+            click(editor.canvas(), 899.99, 649.99);
+            click(editor.canvas(), 125.99, 75.99);
+            PixelReader image = snapshot(editor.canvas());
+            assertColor(image, 0, 0, Color.RED);
+            assertColor(image, 1, 0, Color.WHITE);
+            assertColor(image, 899, 649, Color.RED);
+            assertColor(image, 898, 649, Color.WHITE);
+            assertColor(image, 125, 75, Color.RED);
+            assertColor(image, 126, 75, Color.WHITE);
+            assertEquals(3, editor.model().size());
+        });
+    }
+
+    @Test
     void brushesAreClippedAtTheCanvasEdges() throws Exception {
         withEditor(editor -> {
             editor.button("tool-square").fire();

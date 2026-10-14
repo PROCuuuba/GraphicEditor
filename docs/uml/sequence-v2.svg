@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="850" viewBox="0 0 1440 850" role="img" aria-labelledby="title desc">
+  <title id="title">Последовательность отображения декорированного полигона</title>
+  <desc id="desc">DrawingCanvas вызывает ShadowDecorator, затем BorderDecorator, FillDecorator и Polygon. Декораторы возвращают новые контексты VectorRenderer, который рисует тень, заливку и контур в GraphicsContext.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10Z" fill="#334155"/></marker>
+    <style>text{font-family:Arial,Helvetica,sans-serif;fill:#0f172a;font-size:17px}.title{font-size:27px;font-weight:700}.small{font-size:15px;fill:#475569}.name{font-size:18px;font-weight:700}.box{fill:#eff6ff;stroke:#60a5fa;rx:8}.life{stroke:#94a3b8;stroke-dasharray:7 5;stroke-width:1.5}.call{stroke:#334155;stroke-width:2;marker-end:url(#arrow)}.return{stroke:#64748b;stroke-width:1.5;stroke-dasharray:5 4;marker-end:url(#arrow)}</style>
+  </defs>
+  <rect width="1440" height="850" fill="#f8fafc"/>
+  <text x="30" y="43" class="title">Один render() → цепочка декораторов → одна геометрия</text>
+  <text x="30" y="70" class="small">Shadow(Border(Fill(Polygon))) • r0…r3 — разные неизменяемые контексты с одним GraphicsContext</text>
+  <g class="life"><path d="M100 135 V740"/><path d="M300 135 V740"/><path d="M500 135 V740"/><path d="M700 135 V740"/><path d="M900 135 V740"/><path d="M1120 135 V740"/><path d="M1335 135 V740"/></g>
+  <rect x="18" y="92" width="164" height="43" class="box"/><text x="100" y="119" text-anchor="middle" class="name">DrawingCanvas</text>
+  <rect x="206" y="92" width="188" height="43" class="box"/><text x="300" y="119" text-anchor="middle" class="name">ShadowDecorator</text>
+  <rect x="410" y="92" width="180" height="43" class="box"/><text x="500" y="119" text-anchor="middle" class="name">BorderDecorator</text>
+  <rect x="615" y="92" width="170" height="43" class="box"/><text x="700" y="119" text-anchor="middle" class="name">FillDecorator</text>
+  <rect x="825" y="92" width="150" height="43" class="box"/><text x="900" y="119" text-anchor="middle" class="name">Polygon</text>
+  <rect x="1020" y="92" width="200" height="43" class="box"/><text x="1120" y="119" text-anchor="middle" class="name">VectorRenderer</text>
+  <rect x="1250" y="92" width="172" height="43" class="box"/><text x="1335" y="119" text-anchor="middle" class="name">GraphicsContext</text>
+  <path d="M100 180 H300" class="call"/><text x="115" y="168">render(r0)</text>
+  <path d="M300 225 H1120" class="call"/><text x="610" y="213">r0.withShadow(color, x, y, blur)</text>
+  <path d="M1120 260 H300" class="return"/><text x="720" y="251" class="small">r1</text>
+  <path d="M300 295 H500" class="call"/><text x="315" y="284">render(r1)</text>
+  <path d="M500 340 H1120" class="call"/><text x="675" y="329">r1.withBorder(color, width)</text>
+  <path d="M1120 375 H500" class="return"/><text x="820" y="366" class="small">r2</text>
+  <path d="M500 410 H700" class="call"/><text x="515" y="399">render(r2)</text>
+  <path d="M700 455 H1120" class="call"/><text x="815" y="444">r2.withFill(color)</text>
+  <path d="M1120 490 H700" class="return"/><text x="925" y="481" class="small">r3</text>
+  <path d="M700 525 H900" class="call"/><text x="715" y="514">render(r3)</text>
+  <path d="M900 570 H1120" class="call"/><text x="915" y="559">r3.polygon(vertices)</text>
+  <path d="M1120 610 H1335" class="call"/><text x="1128" y="599" class="small">save(); setGlobalAlpha()</text>
+  <path d="M1120 650 H1335" class="call"/><text x="1128" y="639" class="small">тень → заливка → контур</text>
+  <path d="M1120 690 H1335" class="call"/><text x="1128" y="679" class="small">restore() в finally</text>
+  <rect x="30" y="765" width="1380" height="60" fill="#f0fdf4" stroke="#86efac" rx="8"/>
+  <text x="50" y="790">Каждый декоратор делегирует getWrapped().render(новый контекст). Polygon не знает о конкретных эффектах.</text>
+  <text x="50" y="812" class="small">VectorRenderer — private nested record в DrawingCanvas. Порядок слоёв стабилен для всех шести перестановок различных декораторов.</text>
+</svg>

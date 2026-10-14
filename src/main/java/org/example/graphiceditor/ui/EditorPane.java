@@ -110,9 +110,11 @@ public final class EditorPane extends BorderPane {
         brushSize.setShowTickLabels(true);
         brushSize.setShowTickMarks(true);
         brushSize.setMajorTickUnit(25);
+        brushSize.setMinorTickCount(24);
+        brushSize.setSnapToTicks(true);
         brushSize.setBlockIncrement(1);
         brushSize.valueProperty().addListener((observable, oldValue, newValue) -> {
-            controller.setBrushSize(newValue.doubleValue());
+            controller.setBrushSize(Math.round(newValue.doubleValue()));
             updateStatus();
         });
         Button clear = new Button("Очистить холст");

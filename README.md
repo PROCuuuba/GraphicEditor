@@ -243,14 +243,15 @@ GitHub не позволяет одобрить собственный Pull Requ
 числом история разработки. Полная история изменений доступна в Git и
 Pull Request репозитория.
 
-Задачи публикации и проверки второго инкремента:
+Задачи публикации и проверки второго инкремента
+(ветки функций переименованы из `codex/*` в `feature/*`):
 
 | Задача | Функциональная ветка | Pull Request |
 |---|---|---|
-| [#6 — полигон](https://github.com/PROCuuuba/GraphicEditor/issues/6) | `codex/polygon` | [#12](https://github.com/PROCuuuba/GraphicEditor/pull/12) |
-| [#7 — заливка](https://github.com/PROCuuuba/GraphicEditor/issues/7) | `codex/fill` | [#13](https://github.com/PROCuuuba/GraphicEditor/pull/13) |
-| [#8 — контур](https://github.com/PROCuuuba/GraphicEditor/issues/8) | `codex/border` | [#15](https://github.com/PROCuuuba/GraphicEditor/pull/15) |
-| [#9 — тень](https://github.com/PROCuuuba/GraphicEditor/issues/9) | `codex/shadow` | [#14](https://github.com/PROCuuuba/GraphicEditor/pull/14) |
+| [#6 — полигон](https://github.com/PROCuuuba/GraphicEditor/issues/6) | `feature/polygon` | [#12](https://github.com/PROCuuuba/GraphicEditor/pull/12) |
+| [#7 — заливка](https://github.com/PROCuuuba/GraphicEditor/issues/7) | `feature/fill` | [#13](https://github.com/PROCuuuba/GraphicEditor/pull/13) |
+| [#8 — контур](https://github.com/PROCuuuba/GraphicEditor/issues/8) | `feature/border` | [#15](https://github.com/PROCuuuba/GraphicEditor/pull/15) |
+| [#9 — тень](https://github.com/PROCuuuba/GraphicEditor/issues/9) | `feature/shadow` | [#14](https://github.com/PROCuuuba/GraphicEditor/pull/14) |
 | [#10 — документация и выпуск](https://github.com/PROCuuuba/GraphicEditor/issues/10) | `codex/increment-2` | [#11](https://github.com/PROCuuuba/GraphicEditor/pull/11) |
 
 Общий [PR #11](https://github.com/PROCuuuba/GraphicEditor/pull/11) связывает

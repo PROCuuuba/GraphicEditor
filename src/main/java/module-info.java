@@ -1,7 +1,5 @@
 module org.example.graphiceditor {
     requires javafx.controls;
-    requires java.desktop;
-    requires java.xml;
 
     exports org.example.graphiceditor;
     exports org.example.graphiceditor.model;

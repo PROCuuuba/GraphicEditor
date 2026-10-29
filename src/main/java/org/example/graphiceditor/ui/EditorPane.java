@@ -8,9 +8,6 @@ import javafx.scene.input.KeyEvent;
 import javafx.scene.input.MouseButton;
 import javafx.scene.layout.*;
 import javafx.scene.paint.Color;
-import javafx.scene.image.WritableImage;
-import javafx.geometry.Pos;
-import javafx.stage.FileChooser;
 import org.example.graphiceditor.controller.EditorController;
 import org.example.graphiceditor.controller.PolygonController;
 import org.example.graphiceditor.model.DrawingModel;
@@ -19,14 +16,8 @@ import org.example.graphiceditor.model.Tool;
 import org.example.graphiceditor.model.vector.Shape;
 import org.example.graphiceditor.model.vector.VectorStyle;
 import org.example.graphiceditor.model.vector.Vertex;
-import org.example.graphiceditor.io.PngProjectIO;
 
-import java.awt.image.BufferedImage;
-import java.io.File;
-import java.io.IOException;
-import java.nio.file.Path;
 import java.util.List;
-import java.util.Locale;
 
 public final class EditorPane extends BorderPane {
     private final DrawingModel model;
@@ -64,7 +55,6 @@ public final class EditorPane extends BorderPane {
     private Vertex dragPress;
     private Vertex dragOrigin;
     private boolean vertexMoved;
-    private File projectDirectory;
 
     public EditorPane() {
         this(new DrawingModel(900, 650));
@@ -117,120 +107,14 @@ public final class EditorPane extends BorderPane {
         });
     }
 
-    private HBox header() {
+    private VBox header() {
         Label title = new Label("Графический редактор");
         title.getStyleClass().add("editor-title");
         Label subtitle = new Label("Кисти и полигоны • заливка, контур, тень");
         subtitle.getStyleClass().add("editor-subtitle");
-        VBox heading = new VBox(4, title, subtitle);
-        Region spacer = new Region();
-        HBox.setHgrow(spacer, Priority.ALWAYS);
-        Button open = new Button("Открыть PNG…");
-        open.setId("project-open");
-        open.setTooltip(new Tooltip("Открыть PNG проекта и продолжить редактирование • Ctrl/Cmd + O"));
-        open.setOnAction(event -> chooseProject());
-        Button save = new Button("Сохранить PNG…");
-        save.setId("project-save");
-        save.setTooltip(new Tooltip("Сохранить изображение вместе с редактируемыми фигурами • Ctrl/Cmd + S"));
-        save.setOnAction(event -> chooseSaveProject());
-        HBox header = new HBox(12, heading, spacer, open, save);
-        header.setAlignment(Pos.CENTER_LEFT);
+        VBox header = new VBox(4, title, subtitle);
         header.getStyleClass().add("editor-header");
         return header;
-    }
-
-    private FileChooser projectChooser(String title) {
-        FileChooser chooser = new FileChooser();
-        chooser.setTitle(title);
-        chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("PNG проекта (*.png)", "*.png", "*.PNG"));
-        if (projectDirectory != null && projectDirectory.isDirectory()) chooser.setInitialDirectory(projectDirectory);
-        return chooser;
-    }
-
-    private void chooseSaveProject() {
-        if (!polygons.getDraftVertices().isEmpty()) {
-            fileError("Завершите полигон", "Сначала завершите полигон или отмените его вершины, затем сохраните проект.");
-            return;
-        }
-        FileChooser chooser = projectChooser("Сохранить PNG проекта");
-        chooser.setInitialFileName("Рисунок.png");
-        File file = chooser.showSaveDialog(getScene().getWindow());
-        if (file == null) return;
-        if (!file.getName().toLowerCase(Locale.ROOT).endsWith(".png")) {
-            file = new File(file.getParentFile(), file.getName() + ".png");
-            if (file.exists() && !confirm("Заменить файл?", "Файл «" + file.getName() + "» уже существует. Заменить его?")) return;
-        }
-        try {
-            saveProject(file.toPath());
-            projectDirectory = file.getAbsoluteFile().getParentFile();
-            status.setText("PNG проекта сохранён: " + file.getName());
-        } catch (IOException exception) {
-            fileError("Не удалось сохранить PNG", exception.getMessage());
-        }
-    }
-
-    private void chooseProject() {
-        File file = projectChooser("Открыть PNG проекта").showOpenDialog(getScene().getWindow());
-        if (file == null) return;
-        try {
-            DrawingModel imported = readProject(file.toPath());
-            if ((model.size() > 0 || !model.getShapes().isEmpty() || !polygons.getDraftVertices().isEmpty())
-                    && !confirm("Открыть другой проект?", "Текущий рисунок будет заменён. Продолжить?")) return;
-            replaceProject(imported);
-            projectDirectory = file.getAbsoluteFile().getParentFile();
-            status.setText("Проект открыт: " + file.getName() + " • Фигуры доступны для редактирования");
-        } catch (IOException exception) {
-            fileError("Не удалось открыть PNG", exception.getMessage());
-        }
-    }
-
-    void saveProject(Path path) throws IOException {
-        if (!polygons.getDraftVertices().isEmpty()) throw new IOException("Завершите полигон перед сохранением.");
-        controller.endStroke();
-        stopVertexDrag();
-        DrawingCanvas preview = new DrawingCanvas(model);
-        WritableImage image = preview.snapshot(null, new WritableImage((int) model.getWidth(), (int) model.getHeight()));
-        BufferedImage raster = new BufferedImage((int) image.getWidth(), (int) image.getHeight(), BufferedImage.TYPE_INT_ARGB);
-        for (int y = 0; y < raster.getHeight(); y++) {
-            for (int x = 0; x < raster.getWidth(); x++) raster.setRGB(x, y, image.getPixelReader().getArgb(x, y));
-        }
-        PngProjectIO.write(path, model, raster);
-    }
-
-    DrawingModel readProject(Path path) throws IOException {
-        DrawingModel imported = PngProjectIO.read(path);
-        if (imported.getWidth() != model.getWidth() || imported.getHeight() != model.getHeight()) {
-            throw new IOException("Размер холста PNG проекта должен быть " + (int) model.getWidth() + "×" + (int) model.getHeight() + ".");
-        }
-        return imported;
-    }
-
-    void replaceProject(DrawingModel imported) {
-        clearDrawing();
-        imported.getPixels().forEach(model::add);
-        imported.getShapes().forEach(model::addShape);
-        if (!model.getShapes().isEmpty()) {
-            polygonMode.setSelected(true);
-            polygons.selectShape(0);
-            loadStyle(polygons.getStyle());
-        }
-        refresh();
-    }
-
-    private boolean confirm(String title, String message) {
-        Alert alert = new Alert(Alert.AlertType.CONFIRMATION, message, ButtonType.OK, ButtonType.CANCEL);
-        alert.initOwner(getScene().getWindow());
-        alert.setTitle(title);
-        alert.setHeaderText(title);
-        return alert.showAndWait().orElse(ButtonType.CANCEL) == ButtonType.OK;
-    }
-
-    private void fileError(String title, String message) {
-        Alert alert = new Alert(Alert.AlertType.ERROR, message, ButtonType.OK);
-        alert.initOwner(getScene().getWindow());
-        alert.setTitle(title);
-        alert.setHeaderText(title);
-        alert.showAndWait();
     }
 
     private BorderPane controls() {
@@ -601,14 +485,6 @@ public final class EditorPane extends BorderPane {
     }
 
     private void handleShortcut(KeyEvent event) {
-        if ((event.isShortcutDown() || event.isControlDown()) && !event.isAltDown()) {
-            if (event.getCode() == KeyCode.O || event.getCode() == KeyCode.S) {
-                if (event.getCode() == KeyCode.O) chooseProject();
-                else chooseSaveProject();
-                event.consume();
-                return;
-            }
-        }
         if (inputHasFocus() || event.isAltDown()) return;
         boolean shortcut = event.isShortcutDown() || event.isControlDown();
         boolean handled = true;

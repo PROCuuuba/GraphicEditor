@@ -6,7 +6,7 @@
 
     <groupId>org.example</groupId>
     <artifactId>GraphicEditor</artifactId>
-    <version>0.2.1</version>
+    <version>0.2.0</version>
     <name>GraphicEditor</name>
 
     <properties>

@@ -25,7 +25,7 @@
 .workspace-sheet {
     -fx-background-color: white;
     -fx-border-color: #dbe2ea;
-    -fx-effect: dropshadow(gaussian, rgba(15, 23, 42, 0.12), 18, 0.1, 0, 0);
+    -fx-effect: dropshadow(gaussian, rgba(15, 23, 42, 0.12), 18, 0.1, 0, 5);
 }
 
 .status-bar {
@@ -37,17 +37,6 @@
 .controls-content {
     -fx-padding: 20;
     -fx-background-color: white;
-}
-
-.clear-panel {
-    -fx-padding: 12 20 20 20;
-    -fx-background-color: white;
-}
-
-.zoom-toolbar {
-    -fx-padding: 8 16;
-    -fx-background-color: white;
-    -fx-border-color: transparent transparent #cbd5e1 transparent;
 }
 
 .section-title {

@@ -17,14 +17,9 @@ import org.junit.jupiter.api.io.TempDir;
 
 import java.awt.image.BufferedImage;
 import java.io.IOException;
-import java.io.ObjectInputStream;
-import java.io.ObjectOutputStream;
-import java.io.Serial;
-import java.io.Serializable;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.Arrays;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -33,7 +28,7 @@ class ProjectFilesTest {
     @TempDir Path directory;
 
     @Test
-    void allFourFormatsKeepMixedObjectsExactStylesAndBackgroundAndAreDetectedByContent() throws IOException {
+    void allSupportedFormatsKeepMixedObjectsExactStylesAndBackgroundAndAreDetectedByContent() throws IOException {
         DrawingModel original = example();
         for (ProjectFiles.Format format : ProjectFiles.Format.values()) {
             Path misleadingExtension = directory.resolve(format.name() + ".not-the-real-extension");
@@ -59,7 +54,7 @@ class ProjectFilesTest {
     void changingFormatDoesNotFlattenPolygonsOrLoseDecoratorChainOrder() throws IOException {
         DrawingModel drawing = example();
         String original = ProjectXmlCodec.encode(drawing);
-        for (ProjectFiles.Format format : List.of(ProjectFiles.Format.PNG, ProjectFiles.Format.JAVA,
+        for (ProjectFiles.Format format : List.of(ProjectFiles.Format.PNG,
                 ProjectFiles.Format.JSON, ProjectFiles.Format.SVG, ProjectFiles.Format.PNG)) {
             Path file = directory.resolve("converted." + format.extension());
             ProjectFiles.write(file, drawing, preview(), format);
@@ -121,37 +116,14 @@ class ProjectFilesTest {
     }
 
     @Test
-    void javaSerializationRejectsUnknownObjectsBeforeTheirReadObjectCanExecute() throws IOException {
-        DangerousObject.executed = false;
-        Path file = directory.resolve("unknown.ged");
-        serialize(file, new DangerousObject());
-
-        assertThrows(IOException.class, () -> ProjectFiles.read(file));
-
-        assertFalse(DangerousObject.executed);
-    }
-
-    @Test
-    void javaSerializationRejectsUnsupportedVersionInvalidPayloadTruncationAndTrailingObjects() throws IOException {
-        byte[] xml = ProjectXmlCodec.encode(example()).getBytes(StandardCharsets.UTF_8);
-        Path file = directory.resolve("bad.ged");
-        for (Object object : List.of(new SerializedProject(99, xml), new SerializedProject(1, new byte[]{1, 2, 3}),
-                new SerializedProject(1, null), "not a project")) {
-            serialize(file, object);
-            assertThrows(IOException.class, () -> ProjectFiles.read(file));
-        }
-        ProjectFiles.write(file, example(), null, ProjectFiles.Format.JAVA);
-        byte[] valid = Files.readAllBytes(file);
-        Files.write(file, Arrays.copyOf(valid, valid.length / 2));
-        assertThrows(IOException.class, () -> ProjectFiles.read(file));
-        try (ObjectOutputStream output = new ObjectOutputStream(Files.newOutputStream(file))) {
-            output.writeObject(new SerializedProject(1, xml)); output.writeObject("trailing object");
-        }
+    void unsupportedBinaryInputIsRejected() throws IOException {
+        Path file = directory.resolve("unsupported.bin");
+        Files.write(file, new byte[]{(byte) 0xac, (byte) 0xed, 0, 5, 0, 0});
         assertThrows(IOException.class, () -> ProjectFiles.read(file));
     }
 
     @Test
-    void failedTextOrJavaExportPreservesExistingFileAndLeavesNoTemporaryFiles() throws IOException {
+    void failedExportPreservesExistingFileAndLeavesNoTemporaryFiles() throws IOException {
         Path destination = directory.resolve("old-project");
         byte[] old = "old file content".getBytes(StandardCharsets.UTF_8);
         Files.write(destination, old);
@@ -165,10 +137,6 @@ class ProjectFilesTest {
         }));
         assertArrayEquals(old, Files.readAllBytes(destination));
         try (var files = Files.list(directory)) { assertEquals(1, files.count()); }
-    }
-
-    private static void serialize(Path file, Object object) throws IOException {
-        try (ObjectOutputStream output = new ObjectOutputStream(Files.newOutputStream(file))) { output.writeObject(object); }
     }
 
     private static BufferedImage preview() { return new BufferedImage(96, 72, BufferedImage.TYPE_INT_ARGB); }
@@ -187,11 +155,4 @@ class ProjectFilesTest {
         return drawing;
     }
 
-    private static final class DangerousObject implements Serializable {
-        @Serial private static final long serialVersionUID = 1L;
-        static boolean executed;
-        @Serial private void readObject(ObjectInputStream input) throws IOException, ClassNotFoundException {
-            executed = true; input.defaultReadObject();
-        }
-    }
 }

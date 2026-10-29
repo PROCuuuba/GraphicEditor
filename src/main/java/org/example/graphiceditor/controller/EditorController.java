@@ -5,6 +5,7 @@ import org.example.graphiceditor.factory.PixelFactory;
 import org.example.graphiceditor.model.DrawingModel;
 import org.example.graphiceditor.model.Pixel;
 import org.example.graphiceditor.model.Tool;
+import org.example.graphiceditor.model.EditorSettings;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -12,9 +13,7 @@ import java.util.Objects;
 
 public final class EditorController {
     private final DrawingModel model;
-    private Tool tool = Tool.POINT;
-    private Color color = Color.BLACK;
-    private double brushSize = 16;
+    private final EditorSettings settings;
     private PixelFactory strokeFactory;
     private Color strokeColor;
     private double strokeSize;
@@ -24,39 +23,30 @@ public final class EditorController {
     private boolean connected;
 
     public EditorController(DrawingModel model) {
+        this(model, new EditorSettings());
+    }
+
+    public EditorController(DrawingModel model, EditorSettings settings) {
         this.model = Objects.requireNonNull(model, "model");
+        this.settings = Objects.requireNonNull(settings, "settings");
     }
 
-    public Tool getTool() { return tool; }
-    public Color getColor() { return color; }
-    public double getBrushSize() { return brushSize; }
-
-    public void setTool(Tool tool) {
-        if (tool == null) {
-            throw new IllegalArgumentException("Выберите инструмент");
-        }
-        this.tool = tool;
-    }
-
-    public void setColor(Color color) {
-        this.color = Objects.requireNonNull(color, "color");
-    }
-
-    public void setBrushSize(double size) {
-        if (!Double.isFinite(size) || size < 1 || size > 100) {
-            throw new IllegalArgumentException("Размер кисти должен быть от 1 до 100");
-        }
-        brushSize = size;
-    }
+    public EditorSettings getSettings() { return settings; }
+    public Tool getTool() { return settings.getTool(); }
+    public Color getColor() { return settings.getColor(); }
+    public double getBrushSize() { return settings.getBrushSize(); }
+    public void setTool(Tool tool) { settings.setTool(tool); }
+    public void setColor(Color color) { settings.setColor(color); }
+    public void setBrushSize(double size) { settings.setBrushSize(size); }
 
     public List<Pixel> beginStroke(double x, double y) {
         endStroke();
         if (!model.contains(x, y)) {
             return List.of();
         }
-        strokeFactory = PixelFactory.forTool(tool);
-        strokeColor = color;
-        strokeSize = tool == Tool.POINT ? 1 : brushSize;
+        strokeFactory = PixelFactory.forTool(getTool());
+        strokeColor = getColor();
+        strokeSize = getTool() == Tool.POINT ? 1 : getBrushSize();
         drawing = true;
         connected = true;
         lastX = x;

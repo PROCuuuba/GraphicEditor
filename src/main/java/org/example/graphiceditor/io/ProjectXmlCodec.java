@@ -15,17 +15,13 @@ import org.example.graphiceditor.model.vector.ShapeDecorator;
 import org.example.graphiceditor.model.vector.Vertex;
 
 import javax.xml.stream.XMLInputFactory;
-import javax.xml.stream.XMLOutputFactory;
 import javax.xml.stream.XMLStreamConstants;
 import javax.xml.stream.XMLStreamException;
 import javax.xml.stream.XMLStreamReader;
-import javax.xml.stream.XMLStreamWriter;
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.StringReader;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 import java.util.Set;
 
@@ -41,113 +37,7 @@ final class ProjectXmlCodec {
     private ProjectXmlCodec() { }
 
     static String encode(DrawingModel model) throws IOException {
-        dimensions(model.getWidth(), model.getHeight());
-        if (model.size() > MAX_PIXELS || model.getShapes().size() > MAX_POLYGONS) {
-            throw invalid("слишком много объектов");
-        }
-        ByteArrayOutputStream output = new ByteArrayOutputStream() {
-            @Override public synchronized void write(int value) {
-                ensureSpace(1);
-                super.write(value);
-            }
-            @Override public synchronized void write(byte[] bytes, int offset, int length) {
-                ensureSpace(length);
-                super.write(bytes, offset, length);
-            }
-            private void ensureSpace(int length) {
-                if (count + (long) length > MAX_TEXT_BYTES) {
-                    throw new IllegalArgumentException("данные проекта превышают 8 МиБ");
-                }
-            }
-        };
-        try {
-            XMLStreamWriter writer = XMLOutputFactory.newFactory().createXMLStreamWriter(output, "UTF-8");
-            writer.writeStartDocument("UTF-8", "1.0");
-            writer.writeStartElement("graphic-editor-project");
-            writer.writeAttribute("version", "1");
-            number(writer, "width", model.getWidth());
-            number(writer, "height", model.getHeight());
-            writer.writeStartElement("pixels");
-            for (Pixel pixel : model.getPixels()) {
-                String type = switch (pixel) {
-                    case Point ignored -> "point";
-                    case Circle ignored -> "circle";
-                    case Square ignored -> "square";
-                    default -> throw new IllegalArgumentException("неподдерживаемый тип мазка");
-                };
-                coordinate(model, pixel.getX(), pixel.getY());
-                positive(pixel.getSize(), "размер мазка");
-                writer.writeEmptyElement(type);
-                number(writer, "x", pixel.getX());
-                number(writer, "y", pixel.getY());
-                number(writer, "size", pixel.getSize());
-                color(writer, pixel.getColor());
-            }
-            writer.writeEndElement();
-            writer.writeStartElement("polygons");
-            int totalVertices = 0;
-            for (Shape shape : model.getShapes()) {
-                List<ShapeDecorator> decorators = new ArrayList<>();
-                Shape geometry = shape;
-                while (geometry instanceof ShapeDecorator decorator) {
-                    if (!(decorator instanceof FillDecorator || decorator instanceof BorderDecorator
-                            || decorator instanceof ShadowDecorator) || decorators.size() >= MAX_DECORATORS) {
-                        throw new IllegalArgumentException("неподдерживаемые декораторы фигуры");
-                    }
-                    decorators.add(decorator);
-                    geometry = decorator.getWrapped();
-                }
-                if (!(geometry instanceof Polygon polygon)) {
-                    throw new IllegalArgumentException("неподдерживаемая геометрия фигуры");
-                }
-                totalVertices += polygon.getVertices().size();
-                vertexCount(polygon.getVertices().size(), totalVertices);
-                writer.writeStartElement("polygon");
-                writer.writeStartElement("vertices");
-                for (Vertex vertex : polygon.getVertices()) {
-                    coordinate(model, vertex.x(), vertex.y());
-                    writer.writeEmptyElement("vertex");
-                    number(writer, "x", vertex.x());
-                    number(writer, "y", vertex.y());
-                }
-                writer.writeEndElement();
-                writer.writeStartElement("decorators");
-                Collections.reverse(decorators);
-                for (ShapeDecorator decorator : decorators) {
-                    switch (decorator) {
-                        case FillDecorator fill -> {
-                            writer.writeEmptyElement("fill");
-                            color(writer, fill.getColor());
-                        }
-                        case BorderDecorator border -> {
-                            positive(border.getWidth(), "толщина контура");
-                            writer.writeEmptyElement("border");
-                            color(writer, border.getColor());
-                            number(writer, "width", border.getWidth());
-                        }
-                        case ShadowDecorator shadow -> {
-                            offset(shadow.getOffsetX());
-                            offset(shadow.getOffsetY());
-                            writer.writeEmptyElement("shadow");
-                            color(writer, shadow.getColor());
-                            number(writer, "offset-x", shadow.getOffsetX());
-                            number(writer, "offset-y", shadow.getOffsetY());
-                            number(writer, "blur", shadow.getBlur());
-                        }
-                        default -> throw new IllegalArgumentException("неподдерживаемый декоратор");
-                    }
-                }
-                writer.writeEndElement();
-                writer.writeEndElement();
-            }
-            writer.writeEndElement();
-            writer.writeEndElement();
-            writer.writeEndDocument();
-            writer.close();
-            return output.toString(StandardCharsets.UTF_8);
-        } catch (XMLStreamException | IllegalArgumentException exception) {
-            throw invalid(exception.getMessage(), exception);
-        }
+        return DrawingExporter.export(model, new XmlDrawingBuilder());
     }
 
     static DrawingModel decode(String text) throws IOException {
@@ -165,7 +55,9 @@ final class ProjectXmlCodec {
             reader = factory.createXMLStreamReader(new StringReader(text));
             Parser parser = new Parser(reader);
             parser.start("graphic-editor-project");
-            parser.attributes("version", "width", "height");
+            boolean hasBackground = reader.getAttributeValue(null, "background-r") != null;
+            if (hasBackground) parser.attributes("version", "width", "height", "background-r", "background-g", "background-b", "background-a");
+            else parser.attributes("version", "width", "height");
             if (!"1".equals(reader.getAttributeValue(null, "version"))) {
                 throw invalid("неподдерживаемая версия проекта: " + reader.getAttributeValue(null, "version"));
             }
@@ -173,6 +65,8 @@ final class ProjectXmlCodec {
             double height = parser.number("height");
             dimensions(width, height);
             DrawingModel model = new DrawingModel(width, height);
+            if (hasBackground) model.setBackgroundColor(new Color(parser.component("background-r"), parser.component("background-g"),
+                    parser.component("background-b"), parser.component("background-a")));
             parser.start("pixels");
             parser.attributes();
             while (parser.tag() == XMLStreamConstants.START_ELEMENT) {
@@ -277,35 +171,24 @@ final class ProjectXmlCodec {
         }
     }
 
-    private static void coordinate(DrawingModel model, double x, double y) throws IOException {
+    static void coordinate(DrawingModel model, double x, double y) throws IOException {
         if (!model.contains(x, y)) throw invalid("координата находится за пределами холста");
     }
 
-    private static void positive(double value, String name) throws IOException {
+    static void positive(double value, String name) throws IOException {
         if (!Double.isFinite(value) || value <= 0 || value > MAX_SIDE * 2) {
             throw invalid(name + " должен быть положительным и не превышать 8192");
         }
     }
 
-    private static void offset(double value) throws IOException {
+    static void offset(double value) throws IOException {
         if (!Double.isFinite(value) || Math.abs(value) > MAX_SIDE * 2) throw invalid("слишком большое смещение тени");
     }
 
-    private static void vertexCount(int count, int total) throws IOException {
+    static void vertexCount(int count, int total) throws IOException {
         if (count < 3 || count > MAX_POLYGON_VERTICES || total > MAX_VERTICES) {
             throw invalid("недопустимое количество вершин");
         }
-    }
-
-    private static void number(XMLStreamWriter writer, String key, double value) throws XMLStreamException {
-        writer.writeAttribute(key, Double.toString(value));
-    }
-
-    private static void color(XMLStreamWriter writer, Color color) throws XMLStreamException {
-        number(writer, "r", color.getRed());
-        number(writer, "g", color.getGreen());
-        number(writer, "b", color.getBlue());
-        number(writer, "a", color.getOpacity());
     }
 
     private static IOException invalid(String detail) { return invalid(detail, null); }

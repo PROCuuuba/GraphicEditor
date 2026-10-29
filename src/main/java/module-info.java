@@ -2,6 +2,7 @@ module org.example.graphiceditor {
     requires javafx.controls;
     requires java.desktop;
     requires java.xml;
+    requires com.fasterxml.jackson.core;
 
     exports org.example.graphiceditor;
     exports org.example.graphiceditor.model;

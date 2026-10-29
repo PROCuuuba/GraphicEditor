@@ -13,13 +13,19 @@ import javafx.geometry.Pos;
 import javafx.stage.FileChooser;
 import org.example.graphiceditor.controller.EditorController;
 import org.example.graphiceditor.controller.PolygonController;
+import org.example.graphiceditor.controller.DrawingSelection;
+import org.example.graphiceditor.history.DrawingHistory;
+import org.example.graphiceditor.model.EditorSettings;
+import org.example.graphiceditor.model.Point;
+import org.example.graphiceditor.model.Circle;
+import org.example.graphiceditor.model.Square;
 import org.example.graphiceditor.model.DrawingModel;
 import org.example.graphiceditor.model.Pixel;
 import org.example.graphiceditor.model.Tool;
 import org.example.graphiceditor.model.vector.Shape;
 import org.example.graphiceditor.model.vector.VectorStyle;
 import org.example.graphiceditor.model.vector.Vertex;
-import org.example.graphiceditor.io.PngProjectIO;
+import org.example.graphiceditor.io.ProjectFiles;
 
 import java.awt.image.BufferedImage;
 import java.io.File;
@@ -32,11 +38,20 @@ public final class EditorPane extends BorderPane {
     private final DrawingModel model;
     private final EditorController controller;
     private final PolygonController polygons;
+    private final DrawingSelection objectSelection;
+    private final DrawingHistory history;
+    private final EditorSettings settings;
     private final DrawingCanvas canvas;
     private final CanvasViewport viewport;
     private final ToggleGroup selection = new ToggleGroup();
     private final ToggleButton rasterMode = new ToggleButton("Кисти");
     private final ToggleButton polygonMode = new ToggleButton("Полигон");
+    private final ToggleButton selectMode = new ToggleButton("Выбор");
+    private final Button undo = new Button("Отменить");
+    private final Button redo = new Button("Повторить");
+    private final Button removeObject = new Button("Удалить выбранный объект");
+    private final ColorPicker background = new ColorPicker(Color.WHITE);
+    private final CheckBox snapping = new CheckBox("Привязка к вершинам");
     private final Label status = new Label();
     private final Slider brushSize = new Slider(1, 100, 16);
     private final Label sizeLabel = new Label();
@@ -59,6 +74,8 @@ public final class EditorPane extends BorderPane {
     private final Spinner<Double> shadowY = spinner("shadow-y", -100, 100, 8, 1);
     private final Spinner<Double> shadowBlur = spinner("shadow-blur", 0, 50, 5, 1);
     private boolean vectorMode;
+    private boolean selecting;
+    private Vertex movePoint;
     private boolean syncingList;
     private boolean syncingStyle;
     private Vertex dragPress;
@@ -77,7 +94,11 @@ public final class EditorPane extends BorderPane {
     public EditorPane(DrawingModel model, EditorController controller) {
         this.model = model;
         this.controller = controller;
-        polygons = new PolygonController(model);
+        settings = controller.getSettings();
+        settings.setBackgroundColor(model.getBackgroundColor());
+        polygons = new PolygonController(model, settings);
+        objectSelection = new DrawingSelection(model);
+        history = new DrawingHistory(model);
         canvas = new DrawingCanvas(model);
         viewport = new CanvasViewport(canvas);
         colorPicker = new ColorPicker(controller.getColor());
@@ -95,8 +116,10 @@ public final class EditorPane extends BorderPane {
             controller.endStroke();
             if (dragPress != null) {
                 stopVertexDrag();
-                refresh();
             }
+            history.commit();
+            movePoint = null;
+            refresh();
         });
         loadStyle(polygons.getStyle());
         refresh();
@@ -109,6 +132,9 @@ public final class EditorPane extends BorderPane {
                             if (!isFocused) {
                                 controller.endStroke();
                                 stopVertexDrag();
+                                history.commit();
+                                movePoint = null;
+                                refresh();
                             }
                         });
                     }
@@ -117,24 +143,32 @@ public final class EditorPane extends BorderPane {
         });
     }
 
-    private HBox header() {
+    private VBox header() {
         Label title = new Label("Графический редактор");
         title.getStyleClass().add("editor-title");
         Label subtitle = new Label("Кисти и полигоны • заливка, контур, тень");
         subtitle.getStyleClass().add("editor-subtitle");
         VBox heading = new VBox(4, title, subtitle);
-        Region spacer = new Region();
-        HBox.setHgrow(spacer, Priority.ALWAYS);
-        Button open = new Button("Открыть PNG…");
+        Button open = new Button("Открыть…");
         open.setId("project-open");
         open.setTooltip(new Tooltip("Открыть PNG проекта и продолжить редактирование • Ctrl/Cmd + O"));
         open.setOnAction(event -> chooseProject());
-        Button save = new Button("Сохранить PNG…");
+        Button save = new Button("Сохранить…");
         save.setId("project-save");
         save.setTooltip(new Tooltip("Сохранить изображение вместе с редактируемыми фигурами • Ctrl/Cmd + S"));
         save.setOnAction(event -> chooseSaveProject());
-        HBox header = new HBox(12, heading, spacer, open, save);
-        header.setAlignment(Pos.CENTER_LEFT);
+        Button fresh = new Button("Новый");
+        fresh.setId("project-new");
+        fresh.setTooltip(new Tooltip("Новый рисунок • Ctrl/Cmd + N"));
+        fresh.setOnAction(event -> chooseNewProject());
+        undo.setId("history-undo");
+        redo.setId("history-redo");
+        undo.setTooltip(new Tooltip("Отменить последнее действие • Ctrl/Cmd + Z"));
+        redo.setTooltip(new Tooltip("Повторить действие • Ctrl/Cmd + Shift + Z или Ctrl + Y"));
+        undo.setOnAction(event -> undo());
+        redo.setOnAction(event -> redo());
+        FlowPane actions = new FlowPane(8, 6, fresh, open, save, undo, redo);
+        VBox header = new VBox(10, heading, actions);
         header.getStyleClass().add("editor-header");
         return header;
     }
@@ -142,7 +176,10 @@ public final class EditorPane extends BorderPane {
     private FileChooser projectChooser(String title) {
         FileChooser chooser = new FileChooser();
         chooser.setTitle(title);
-        chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("PNG проекта (*.png)", "*.png", "*.PNG"));
+        for (ProjectFiles.Format format : ProjectFiles.Format.values()) {
+            chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter(format.description(), "*." + format.extension()));
+        }
+        chooser.setSelectedExtensionFilter(chooser.getExtensionFilters().getFirst());
         if (projectDirectory != null && projectDirectory.isDirectory()) chooser.setInitialDirectory(projectDirectory);
         return chooser;
     }
@@ -152,25 +189,26 @@ public final class EditorPane extends BorderPane {
             fileError("Завершите полигон", "Сначала завершите полигон или отмените его вершины, затем сохраните проект.");
             return;
         }
-        FileChooser chooser = projectChooser("Сохранить PNG проекта");
-        chooser.setInitialFileName("Рисунок.png");
+        FileChooser chooser = projectChooser("Сохранить рисунок");
+        chooser.setInitialFileName("Рисунок");
         File file = chooser.showSaveDialog(getScene().getWindow());
         if (file == null) return;
-        if (!file.getName().toLowerCase(Locale.ROOT).endsWith(".png")) {
-            file = new File(file.getParentFile(), file.getName() + ".png");
+        ProjectFiles.Format format = ProjectFiles.Format.values()[chooser.getExtensionFilters().indexOf(chooser.getSelectedExtensionFilter())];
+        if (!file.getName().toLowerCase(Locale.ROOT).endsWith("." + format.extension())) {
+            file = new File(file.getParentFile(), file.getName() + "." + format.extension());
             if (file.exists() && !confirm("Заменить файл?", "Файл «" + file.getName() + "» уже существует. Заменить его?")) return;
         }
         try {
-            saveProject(file.toPath());
+            saveProject(file.toPath(), format);
             projectDirectory = file.getAbsoluteFile().getParentFile();
-            status.setText("PNG проекта сохранён: " + file.getName());
+            status.setText("Рисунок сохранён: " + file.getName());
         } catch (IOException exception) {
-            fileError("Не удалось сохранить PNG", exception.getMessage());
+            fileError("Не удалось сохранить рисунок", exception.getMessage());
         }
     }
 
     private void chooseProject() {
-        File file = projectChooser("Открыть PNG проекта").showOpenDialog(getScene().getWindow());
+        File file = projectChooser("Открыть рисунок").showOpenDialog(getScene().getWindow());
         if (file == null) return;
         try {
             DrawingModel imported = readProject(file.toPath());
@@ -180,40 +218,93 @@ public final class EditorPane extends BorderPane {
             projectDirectory = file.getAbsoluteFile().getParentFile();
             status.setText("Проект открыт: " + file.getName() + " • Фигуры доступны для редактирования");
         } catch (IOException exception) {
-            fileError("Не удалось открыть PNG", exception.getMessage());
+            fileError("Не удалось открыть рисунок", exception.getMessage());
         }
     }
 
     void saveProject(Path path) throws IOException {
+        saveProject(path, ProjectFiles.Format.PNG);
+    }
+
+    void saveProject(Path path, ProjectFiles.Format format) throws IOException {
         if (!polygons.getDraftVertices().isEmpty()) throw new IOException("Завершите полигон перед сохранением.");
         controller.endStroke();
         stopVertexDrag();
+        history.commit();
+        if (format != ProjectFiles.Format.PNG) {
+            ProjectFiles.write(path, model, null, format);
+            refresh();
+            return;
+        }
         DrawingCanvas preview = new DrawingCanvas(model);
         WritableImage image = preview.snapshot(null, new WritableImage((int) model.getWidth(), (int) model.getHeight()));
         BufferedImage raster = new BufferedImage((int) image.getWidth(), (int) image.getHeight(), BufferedImage.TYPE_INT_ARGB);
         for (int y = 0; y < raster.getHeight(); y++) {
             for (int x = 0; x < raster.getWidth(); x++) raster.setRGB(x, y, image.getPixelReader().getArgb(x, y));
         }
-        PngProjectIO.write(path, model, raster);
+        ProjectFiles.write(path, model, raster, format);
+        refresh();
     }
 
     DrawingModel readProject(Path path) throws IOException {
-        DrawingModel imported = PngProjectIO.read(path);
+        DrawingModel imported = ProjectFiles.read(path);
         if (imported.getWidth() != model.getWidth() || imported.getHeight() != model.getHeight()) {
-            throw new IOException("Размер холста PNG проекта должен быть " + (int) model.getWidth() + "×" + (int) model.getHeight() + ".");
+            throw new IOException("Размер холста проекта должен быть " + (int) model.getWidth() + "×" + (int) model.getHeight() + ".");
         }
         return imported;
     }
 
     void replaceProject(DrawingModel imported) {
-        clearDrawing();
+        resetInteraction();
+        model.clear();
         imported.getPixels().forEach(model::add);
         imported.getShapes().forEach(model::addShape);
+        model.setBackgroundColor(imported.getBackgroundColor());
+        settings.setBackgroundColor(model.getBackgroundColor());
+        history.clear();
         if (!model.getShapes().isEmpty()) {
             polygonMode.setSelected(true);
             polygons.selectShape(0);
             loadStyle(polygons.getStyle());
         }
+        refresh();
+    }
+
+    void newProject() {
+        resetInteraction();
+        model.clear();
+        model.setBackgroundColor(settings.getBackgroundColor());
+        history.clear();
+        refresh();
+    }
+
+    private void chooseNewProject() {
+        if ((model.size() > 0 || !model.getShapes().isEmpty() || !polygons.getDraftVertices().isEmpty())
+                && !confirm("Новый рисунок?", "Текущий рисунок будет заменён пустым. Продолжить?")) return;
+        newProject();
+    }
+
+    private void resetInteraction() {
+        controller.endStroke();
+        stopVertexDrag();
+        polygons.cancelPolygon();
+        polygons.selectShape(-1);
+        objectSelection.clear();
+        movePoint = null;
+    }
+
+    void undo() {
+        controller.endStroke();
+        stopVertexDrag();
+        history.commit();
+        resetInteraction();
+        history.undo();
+        refresh();
+    }
+
+    void redo() {
+        resetInteraction();
+        history.redo();
         refresh();
     }
 
@@ -239,6 +330,9 @@ public final class EditorPane extends BorderPane {
         polygonMode.setId("mode-polygon");
         rasterMode.setToggleGroup(modes);
         polygonMode.setToggleGroup(modes);
+        selectMode.setToggleGroup(modes);
+        selectMode.setId("mode-select");
+        selectMode.setTooltip(new Tooltip("Выбрать объект щелчком и переместить мышью • V"));
         rasterMode.setSelected(true);
         rasterMode.setTooltip(new Tooltip("Рисование точкой, круглой или квадратной кистью"));
         polygonMode.setTooltip(new Tooltip("Полигон • P. Для замыкания нажмите первую вершину; готовые вершины можно перетаскивать"));
@@ -248,14 +342,18 @@ public final class EditorPane extends BorderPane {
                 return;
             }
             vectorMode = selected == polygonMode;
+            selecting = selected == selectMode;
             controller.endStroke();
             polygons.cancelVertexDrag();
             stopVertexDrag();
+            history.commit();
+            objectSelection.clear();
+            movePoint = null;
             polygons.cancelPolygon();
             restoreSelectedStyle();
             refresh();
         });
-        HBox modeButtons = new HBox(8, rasterMode, polygonMode);
+        HBox modeButtons = new HBox(4, rasterMode, polygonMode, selectMode);
 
         VBox tools = new VBox(8);
         for (Tool tool : Tool.values()) tools.getChildren().add(toolButton(tool));
@@ -271,6 +369,7 @@ public final class EditorPane extends BorderPane {
         colorPicker.setMaxWidth(Double.MAX_VALUE);
         colorPicker.valueProperty().addListener((observable, previous, color) -> {
             controller.setColor(color);
+            updateSelectedPixel();
             updateStatus();
         });
         brushSize.setId("brush-size");
@@ -282,6 +381,7 @@ public final class EditorPane extends BorderPane {
         brushSize.setBlockIncrement(1);
         brushSize.valueProperty().addListener((observable, oldValue, newValue) -> {
             controller.setBrushSize(Math.round(newValue.doubleValue()));
+            updateSelectedPixel();
             updateStatus();
         });
         rasterPanel.getChildren().addAll(section("Инструменты"), tools,
@@ -289,7 +389,25 @@ public final class EditorPane extends BorderPane {
                 new Separator(), section("Размер кисти"), brushSize, sizeLabel);
         buildVectorPanel();
 
-        VBox content = new VBox(12, modeButtons, rasterPanel, vectorPanel);
+        removeObject.setId("object-delete");
+        removeObject.setMaxWidth(Double.MAX_VALUE);
+        removeObject.setTooltip(new Tooltip("Удалить выбранный объект • Delete"));
+        removeObject.setOnAction(event -> deleteSelection());
+        background.setId("background-color");
+        background.setMaxWidth(Double.MAX_VALUE);
+        background.setValue(settings.getBackgroundColor());
+        background.valueProperty().addListener((observable, previous, color) -> {
+            if (model.getBackgroundColor().equals(color)) return;
+            change("Цвет фона", () -> {
+                settings.setBackgroundColor(color);
+                model.setBackgroundColor(color);
+            });
+        });
+        snapping.setId("snapping-enabled");
+        snapping.setSelected(settings.isSnapEnabled());
+        snapping.setOnAction(event -> settings.setSnapEnabled(snapping.isSelected()));
+        VBox content = new VBox(12, modeButtons, removeObject, rasterPanel, vectorPanel,
+                new Separator(), section("Настройки"), new Label("Цвет фона"), background, snapping);
         content.getStyleClass().add("controls-content");
         ScrollPane scroll = new ScrollPane(content);
         scroll.setFitToWidth(true);
@@ -314,7 +432,7 @@ public final class EditorPane extends BorderPane {
         finish.setOnAction(event -> {
             try {
                 polygons.setStyle(readStyle());
-                polygons.finishPolygon();
+                change("Создание полигона", () -> polygons.finishPolygon());
                 refresh();
             } catch (IllegalArgumentException | IllegalStateException exception) {
                 status.setText(exception.getMessage());
@@ -324,6 +442,7 @@ public final class EditorPane extends BorderPane {
         cancel.setTooltip(new Tooltip("Отменить вершины или текущее перетаскивание • Escape"));
         cancel.setOnAction(event -> {
             polygons.cancelVertexDrag();
+            history.cancel();
             stopVertexDrag();
             polygons.cancelPolygon();
             restoreSelectedStyle();
@@ -344,6 +463,7 @@ public final class EditorPane extends BorderPane {
                 VectorStyle draftStyle = polygons.getDraftVertices().isEmpty() ? null : readStyle();
                 stopVertexDrag();
                 polygons.selectShape(index.intValue());
+                if (selecting) objectSelection.selectShape(index.intValue());
                 if (draftStyle != null) polygons.setStyle(draftStyle);
                 else if (polygons.getSelectedShape() != null) loadStyle(polygons.getStyle());
                 refresh();
@@ -364,14 +484,14 @@ public final class EditorPane extends BorderPane {
             if (!polygons.getDraftVertices().isEmpty()) return;
             stopVertexDrag();
             polygons.setStyle(readStyle());
-            polygons.applyStyleToSelected();
+            applySelectedStyle();
             refresh();
         });
         delete.setId("polygon-delete");
         delete.setTooltip(new Tooltip("Удалить выбранный полигон • Delete / Backspace"));
         delete.setOnAction(event -> {
             stopVertexDrag();
-            polygons.deleteSelected();
+            change("Удаление полигона", () -> polygons.deleteSelected());
             refresh();
         });
         GridPane border = propertyGrid();
@@ -429,9 +549,18 @@ public final class EditorPane extends BorderPane {
         polygons.setStyle(readStyle());
         if (polygons.getDraftVertices().isEmpty() && polygons.getSelectedShape() != null) {
             stopVertexDrag();
-            polygons.applyStyleToSelected();
+            applySelectedStyle();
         }
         refresh();
+    }
+
+    private void applySelectedStyle() {
+        Shape current = polygons.getSelectedShape();
+        if (current == null) return;
+        Shape candidate = readStyle().decorate(VectorStyle.geometryOf(current));
+        if (VectorStyle.from(current).equals(VectorStyle.from(candidate))) return;
+        change("Оформление полигона", () -> polygons.applyStyleToSelected());
+        if (selecting) objectSelection.selectShape(polygons.getSelectedIndex());
     }
 
     private void restoreSelectedStyle() {
@@ -465,7 +594,21 @@ public final class EditorPane extends BorderPane {
                 double x = logicalCoordinate(event.getX());
                 double y = logicalCoordinate(event.getY());
                 canvas.requestFocus();
-                if (vectorMode) {
+                if (selecting) {
+                    objectSelection.selectAt(x, y, 5 / viewport.getZoom());
+                    polygons.selectShape(objectSelection.getSelectedShapeIndex());
+                    restoreSelectedStyle();
+                    if (objectSelection.getSelectedObject() instanceof Pixel pixel) {
+                        syncingStyle = true;
+                        colorPicker.setValue(pixel.getColor());
+                        brushSize.setValue(Math.min(100, pixel.getSize()));
+                        syncingStyle = false;
+                    }
+                    movePoint = new Vertex(Math.max(0, x), Math.max(0, y));
+                    history.begin("Перемещение объекта");
+                    refresh();
+                } else if (vectorMode) {
+                    history.begin("Перемещение вершины");
                     if (polygons.startVertexDrag(x, y, snapTolerance())) {
                         dragPress = new Vertex(x, y);
                         dragOrigin = polygons.getSelectedShape().getVertices().stream().min(
@@ -474,7 +617,11 @@ public final class EditorPane extends BorderPane {
                         vertexMoved = false;
                         refresh();
                     } else placeVertex(x, y);
-                } else draw(controller.beginStroke(x, y));
+                } else {
+                    objectSelection.clear();
+                    history.begin("Штрих кисти");
+                    draw(controller.beginStroke(x, y));
+                }
                 event.consume();
             }
         });
@@ -482,7 +629,12 @@ public final class EditorPane extends BorderPane {
             if (event.isPrimaryButtonDown()) {
                 double x = logicalCoordinate(event.getX());
                 double y = logicalCoordinate(event.getY());
-                if (vectorMode && dragPress != null && polygons.isDraggingVertex()) {
+                if (selecting && movePoint != null) {
+                    objectSelection.moveSelected(x - movePoint.x(), y - movePoint.y());
+                    movePoint = new Vertex(Math.max(0, x), Math.max(0, y));
+                    polygons.selectShape(objectSelection.getSelectedShapeIndex());
+                    refresh();
+                } else if (vectorMode && dragPress != null && polygons.isDraggingVertex()) {
                     if (vertexMoved || Math.hypot(x - dragPress.x(),
                             y - dragPress.y()) * viewport.getZoom() >= 2) {
                         if (!vertexMoved) loadStyle(polygons.getStyle());
@@ -491,7 +643,7 @@ public final class EditorPane extends BorderPane {
                                 logicalCoordinate(dragOrigin.y() + y - dragPress.y()));
                         refresh();
                     }
-                } else if (!vectorMode) draw(controller.continueStroke(x, y));
+                } else if (!vectorMode && !selecting) draw(controller.continueStroke(x, y));
                 event.consume();
             }
         });
@@ -520,6 +672,9 @@ public final class EditorPane extends BorderPane {
                 if (!moved) placeVertex(pressed.x(), pressed.y());
                 else refresh();
             }
+            movePoint = null;
+            history.commit();
+            refresh();
         });
     }
 
@@ -530,10 +685,11 @@ public final class EditorPane extends BorderPane {
     }
 
     private void refresh() {
-        rasterPanel.setVisible(!vectorMode);
-        rasterPanel.setManaged(!vectorMode);
-        vectorPanel.setVisible(vectorMode);
-        vectorPanel.setManaged(vectorMode);
+        boolean showVector = vectorMode || selecting && polygons.getSelectedShape() != null;
+        rasterPanel.setVisible(!showVector);
+        rasterPanel.setManaged(!showVector);
+        vectorPanel.setVisible(showVector);
+        vectorPanel.setManaged(showVector);
         int index = polygons.getSelectedIndex();
         syncingList = true;
         try {
@@ -547,25 +703,35 @@ public final class EditorPane extends BorderPane {
         apply.setDisable(index < 0 || !polygons.getDraftVertices().isEmpty());
         delete.setDisable(index < 0);
         canvas.setDraftVertices(polygons.getDraftVertices());
-        canvas.setSelectedShape(vectorMode ? polygons.getSelectedShape() : null);
+        canvas.setSelectedShape(showVector ? polygons.getSelectedShape() : null);
+        canvas.setSelectedPixel(selecting && objectSelection.getSelectedObject() instanceof Pixel pixel ? pixel : null);
         canvas.setSnapVertex(null);
-        canvas.setCursor(Cursor.CROSSHAIR);
+        canvas.setCursor(selecting ? Cursor.DEFAULT : Cursor.CROSSHAIR);
+        removeObject.setVisible(selecting);
+        removeObject.setManaged(selecting);
+        removeObject.setDisable(objectSelection.getSelectedObject() == null);
+        undo.setDisable(!history.canUndo());
+        redo.setDisable(!history.canRedo());
+        if (!background.getValue().equals(model.getBackgroundColor())) background.setValue(model.getBackgroundColor());
+        settings.setBackgroundColor(model.getBackgroundColor());
         canvas.renderAll();
         updateStatus();
     }
 
     private void updateStatus() {
-        brushSize.setDisable(controller.getTool() == Tool.POINT);
-        sizeLabel.setText(controller.getTool() == Tool.POINT ? "Точка: 1 пиксель"
+        boolean point = selecting && objectSelection.getSelectedObject() instanceof Pixel pixel
+                ? pixel instanceof Point : controller.getTool() == Tool.POINT;
+        brushSize.setDisable(point);
+        sizeLabel.setText(point ? "Точка: 1 пиксель"
                 : "Размер: %.0f пикс.".formatted(controller.getBrushSize()));
-        status.setText(vectorMode
+        status.setText(selecting ? "Выбор • " + (objectSelection.getSelectedObject() == null ? "Щёлкните по объекту" : "Перетащите объект или измените его параметры") : vectorMode
                 ? "Полигон • Вершин: %d • Полигонов: %d".formatted(
                         polygons.getDraftVertices().size(), model.getShapes().size())
                 : "Инструмент: %s • Элементов: %d • Полигонов: %d".formatted(
                         controller.getTool().getDisplayName(), model.size(), model.getShapes().size()));
     }
 
-    private double snapTolerance() { return 10 / viewport.getZoom(); }
+    private double snapTolerance() { return settings.isSnapEnabled() ? settings.getSnapTolerance() / viewport.getZoom() : 0; }
 
     private static double logicalCoordinate(double value) {
         double integer = Math.rint(value);
@@ -574,7 +740,9 @@ public final class EditorPane extends BorderPane {
 
     private void placeVertex(double x, double y) {
         polygons.setStyle(readStyle());
+        history.begin("Создание полигона");
         polygons.placeVertex(x, y, snapTolerance());
+        history.commit();
         refresh();
     }
 
@@ -586,10 +754,42 @@ public final class EditorPane extends BorderPane {
     }
 
     private void clearDrawing() {
-        stopVertexDrag();
-        controller.clear();
-        polygons.clear();
+        change("Очистка рисунка", () -> {
+            resetInteraction();
+            model.clear();
+        });
+    }
+
+    private void change(String name, Runnable action) {
+        history.begin(name);
+        action.run();
+        history.commit();
         refresh();
+    }
+
+    private void deleteSelection() {
+        change("Удаление объекта", () -> {
+            objectSelection.removeSelected();
+            polygons.selectShape(-1);
+        });
+    }
+
+    private void updateSelectedPixel() {
+        if (syncingStyle || !selecting || !(objectSelection.getSelectedObject() instanceof Pixel pixel)) return;
+        double desiredSize = pixel instanceof Point ? 1 : controller.getBrushSize();
+        if (pixel.getColor().equals(controller.getColor()) && pixel.getSize() == desiredSize) return;
+        int index = objectSelection.getSelectedPixelIndex();
+        change("Оформление элемента кисти", () -> {
+            double size = controller.getBrushSize();
+            Pixel edited = switch (pixel) {
+                case Point ignored -> new Point(pixel.getX(), pixel.getY(), 1, controller.getColor());
+                case Circle ignored -> new Circle(pixel.getX(), pixel.getY(), size, controller.getColor());
+                case Square ignored -> new Square(pixel.getX(), pixel.getY(), size, controller.getColor());
+                default -> throw new IllegalArgumentException("Неизвестный инструмент");
+            };
+            model.replacePixel(index, edited);
+            objectSelection.selectPixel(index);
+        });
     }
 
     private boolean inputHasFocus() {
@@ -614,6 +814,9 @@ public final class EditorPane extends BorderPane {
         boolean handled = true;
         if (shortcut) {
             switch (event.getCode()) {
+                case N -> chooseNewProject();
+                case Z -> { if (event.isShiftDown()) redo(); else undo(); }
+                case Y -> redo();
                 case PLUS, EQUALS, ADD -> viewport.zoomIn();
                 case MINUS, SUBTRACT -> viewport.zoomOut();
                 case DIGIT0, NUMPAD0 -> viewport.resetZoom();
@@ -634,6 +837,7 @@ public final class EditorPane extends BorderPane {
                 case DIGIT2, NUMPAD2 -> ((ToggleButton) lookup("#tool-circle")).fire();
                 case DIGIT3, NUMPAD3 -> ((ToggleButton) lookup("#tool-square")).fire();
                 case P -> polygonMode.setSelected(true);
+                case V -> selectMode.setSelected(true);
                 case B -> rasterMode.setSelected(true);
                 case ENTER -> {
                     if (vectorMode && !finish.isDisabled()) finish.fire();
@@ -641,6 +845,7 @@ public final class EditorPane extends BorderPane {
                 }
                 case ESCAPE -> {
                     polygons.cancelVertexDrag();
+                    history.cancel();
                     stopVertexDrag();
                     polygons.cancelPolygon();
                     restoreSelectedStyle();
@@ -648,7 +853,8 @@ public final class EditorPane extends BorderPane {
                     refresh();
                 }
                 case DELETE, BACK_SPACE -> {
-                    if (vectorMode && !delete.isDisabled()) delete.fire();
+                    if (selecting) deleteSelection();
+                    else if (vectorMode && !delete.isDisabled()) delete.fire();
                     else handled = false;
                 }
                 default -> handled = false;

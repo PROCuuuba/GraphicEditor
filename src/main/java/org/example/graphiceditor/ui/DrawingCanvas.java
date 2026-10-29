@@ -21,6 +21,7 @@ public final class DrawingCanvas extends Canvas implements PixelRenderer {
     private final DrawingModel model;
     private List<Vertex> draft = List.of();
     private Shape selected;
+    private Pixel selectedPixel;
     private Vertex snapVertex;
     private double viewZoom = 1;
 
@@ -39,6 +40,10 @@ public final class DrawingCanvas extends Canvas implements PixelRenderer {
         selected = shape;
     }
 
+    public void setSelectedPixel(Pixel pixel) {
+        selectedPixel = pixel;
+    }
+
     public void setSnapVertex(Vertex vertex) {
         snapVertex = vertex;
     }
@@ -53,7 +58,8 @@ public final class DrawingCanvas extends Canvas implements PixelRenderer {
 
     public void renderAll() {
         GraphicsContext context = getGraphicsContext2D();
-        context.setFill(Color.WHITE);
+        context.clearRect(0, 0, getWidth(), getHeight());
+        context.setFill(model.getBackgroundColor());
         context.fillRect(0, 0, getWidth(), getHeight());
         drawPixels(model.getPixels());
         for (Shape shape : model.getShapes()) {
@@ -74,6 +80,14 @@ public final class DrawingCanvas extends Canvas implements PixelRenderer {
         context.setStroke(Color.DODGERBLUE);
         context.setFill(Color.DODGERBLUE);
         context.setLineWidth(1 / viewZoom);
+        if (selectedPixel != null && model.getPixels().contains(selectedPixel)) {
+            double half = selectedPixel.getSize() / 2;
+            double padding = 4 / viewZoom;
+            context.setLineDashes(4 / viewZoom, 3 / viewZoom);
+            context.strokeRect(selectedPixel.getX() - half - padding, selectedPixel.getY() - half - padding,
+                    selectedPixel.getSize() + 2 * padding, selectedPixel.getSize() + 2 * padding);
+            context.setLineDashes();
+        }
         if (selected != null && model.getShapes().contains(selected)) {
             List<Vertex> vertices = selected.getVertices();
             context.setLineDashes(5 / viewZoom, 4 / viewZoom);

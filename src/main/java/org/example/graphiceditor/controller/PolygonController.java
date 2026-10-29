@@ -1,6 +1,7 @@
 package org.example.graphiceditor.controller;
 
 import org.example.graphiceditor.model.DrawingModel;
+import org.example.graphiceditor.model.EditorSettings;
 import org.example.graphiceditor.model.vector.Polygon;
 import org.example.graphiceditor.model.vector.Shape;
 import org.example.graphiceditor.model.vector.VectorStyle;
@@ -15,20 +16,25 @@ public final class PolygonController {
 
     private final DrawingModel model;
     private final List<Vertex> draftVertices = new ArrayList<>();
-    private VectorStyle style = VectorStyle.defaults();
+    private final EditorSettings settings;
     private Shape selectedShape;
     private Shape originalDraggedShape;
     private int draggedVertexIndex = -1;
 
     public PolygonController(DrawingModel model) {
+        this(model, new EditorSettings());
+    }
+
+    public PolygonController(DrawingModel model, EditorSettings settings) {
         this.model = Objects.requireNonNull(model, "model");
+        this.settings = Objects.requireNonNull(settings, "settings");
     }
 
     public List<Vertex> getDraftVertices() { return List.copyOf(draftVertices); }
-    public VectorStyle getStyle() { return style; }
+    public VectorStyle getStyle() { return settings.getVectorStyle(); }
 
     public void setStyle(VectorStyle style) {
-        this.style = Objects.requireNonNull(style, "style");
+        settings.setVectorStyle(style);
     }
 
     public Vertex findSnapVertex(double x, double y, double tolerance) {
@@ -181,7 +187,7 @@ public final class PolygonController {
         if (draftVertices.size() < 3) {
             throw new IllegalStateException("Добавьте не меньше трёх вершин многоугольника");
         }
-        Shape shape = style.decorate(new Polygon(draftVertices));
+        Shape shape = getStyle().decorate(new Polygon(draftVertices));
         if (!model.addShape(shape)) {
             throw new IllegalStateException("Вершины фигуры должны находиться внутри холста");
         }
@@ -222,7 +228,7 @@ public final class PolygonController {
         VectorStyle selectedStyle = VectorStyle.from(shape);
         endVertexDrag();
         selectedShape = shape;
-        style = selectedStyle;
+        setStyle(selectedStyle);
     }
 
     public boolean applyStyleToSelected() {
@@ -231,7 +237,7 @@ public final class PolygonController {
             return false;
         }
         endVertexDrag();
-        Shape replacement = style.decorate(VectorStyle.geometryOf(selectedShape));
+        Shape replacement = getStyle().decorate(VectorStyle.geometryOf(selectedShape));
         model.replaceShape(index, replacement);
         selectedShape = replacement;
         return true;
